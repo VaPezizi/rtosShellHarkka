@@ -23,6 +23,9 @@ void serialInputTask(void * params){
                     Serial.println("Serial Task: Failed to send char to inputQueue");
                 }
                 xSemaphoreGive(inputQueueMutex);
+            }else{
+                Serial.println("Serial Task: Failed to take inputQueueMutex");
+                Serial.printf("Current owner of inputQueueMutex: %p\n", xSemaphoreGetMutexHolder(inputQueueMutex));
             }
         }
         vTaskDelay(100 / portTICK_PERIOD_MS); // Small delay to avoid hogging the CPU

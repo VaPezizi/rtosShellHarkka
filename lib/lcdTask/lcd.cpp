@@ -11,7 +11,8 @@ void lcdTask(void * params){
   
   LCDTaskParams * lcdparams = (LCDTaskParams *) params;
 
-  static LiquidCrystal_I2C lcd(lcdparams->lcdAddress, lcdparams->lcdCols, lcdparams->lcdRows);
+  static LiquidCrystal_I2C lcd(lcdparams->address, lcdparams->lcdCols, lcdparams->lcdRows);
+  //static LiquidCrystal_I2C lcd(0x27, 16, 2);  // Set the LCD I2C address
   uint8_t currentBufIndex, currentRow = 0;
   char localBuffer[32] = {0};
 
@@ -22,8 +23,18 @@ void lcdTask(void * params){
 
   while (1)
   {
-    uint32_t notificationValue;
-    if(xSemaphoreTake(displayBufferMutex, pdTICKS_TO_MS(100)) == pdTRUE){
+    /*if(1){
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("Hello, AAAALLLLL World!");
+      Serial.println("LCD Task: Displaying welcome message");
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      
+      continue;
+    }*/
+
+    //uint32_t notificationValue;
+    if(xSemaphoreTake(outputQueueMutex, pdTICKS_TO_MS(100)) == pdTRUE){
       char ch;
       if(xQueueReceive(*lcdparams->inputQueue, &ch, (TickType_t)10) == pdTRUE){
         if(ch == '\b'){ //Handle backspace
@@ -33,15 +44,17 @@ void lcdTask(void * params){
             lcd.print(' '); //Overwrite with space
             lcd.setCursor(currentBufIndex, currentRow);
           }
-          xSemaphoreGive(displayBufferMutex);
+          xSemaphoreGive(outputQueueMutex);
+          vTaskDelay(50 / portTICK_PERIOD_MS);
           continue; //Skip further processing for backspace
         }
-        if(ch == '\x1b'){ //Clear screen command
+        if(ch == '\x1b' /*|| ch== '\n' || ch == '\r'*/){ //Clear screen command
           lcd.clear();
           lcd.setCursor(0,0);
           currentBufIndex = 0;
           currentRow = 0;
-          xSemaphoreGive(displayBufferMutex);
+          xSemaphoreGive(outputQueueMutex);
+          vTaskDelay(50 / portTICK_PERIOD_MS);
           continue;
         }
         currentBufIndex++;
@@ -61,7 +74,9 @@ void lcdTask(void * params){
           //lcd.clear();
         //}
       }
-      xSemaphoreGive(displayBufferMutex);
+      xSemaphoreGive(outputQueueMutex);
+    }else{
+      Serial.println("LCD Task: Failed to take outputQueueMutex");
     }
     
     vTaskDelay(200 / portTICK_PERIOD_MS);

@@ -1,5 +1,3 @@
-#pragma once
-
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -12,6 +10,9 @@
 #include "lcd.h"
 #include "serial.h"
 #include "shell.h"
+
+volatile SemaphoreHandle_t inputQueueMutex = NULL;
+volatile SemaphoreHandle_t outputQueueMutex = NULL;
 
 //LiquidCrystal_I2C lcd(0x27, 16, 2);  // Set the LCD I2C address
 
@@ -43,21 +44,26 @@ void setup(){
   // put your setup code here, to run once: 
   Serial.begin(115200);
 
-  static QueueHandle_t InputQueue = xQueueCreate(5, sizeof(char));
-  static QueueHandle_t stdQueue = xQueueCreate(40, sizeof(char));
+  static QueueHandle_t InputQueue = xQueueCreate(10, sizeof(char));
+  static QueueHandle_t outQueue = xQueueCreate(40, sizeof(char));
 
 
   inputQueueMutex = xSemaphoreCreateMutex();
-  displayBufferMutex = xSemaphoreCreateMutex();
+  outputQueueMutex = xSemaphoreCreateMutex();
+
+  TaskHandle_t lcdHandle = NULL;
+  TaskHandle_t serialHandle = NULL;
+
+  vTaskDelay(5000 / portTICK_PERIOD_MS);
 
   //memset(displayBuffer, ' ', sizeof(displayBuffer));
   static ShellTaskParams shellParams = {
     .inputQueue = &InputQueue,
-    .stdQueue = &stdQueue
+    .outputQueue = &outQueue
   };
 
   static LCDTaskParams lcdParams = {
-    .inputQueue = &stdQueue,
+    .inputQueue = &outQueue,
     .lcdCols = 16,
     .lcdRows = 2,
     .address = 0x27
@@ -65,16 +71,30 @@ void setup(){
   static SerialInputTaskParams serialParams = {
     .shellTaskHandle = NULL,
     .inputQueue = &InputQueue
-};
+  };
 
-  if(InputQueue == NULL || inputQueueMutex == NULL){
-    Serial.println("Could not create the queue");
+  if(InputQueue == NULL || inputQueueMutex == NULL || outQueue == NULL || outputQueueMutex == NULL){
+    Serial.println("Could not create queues or mutexes!");
     
+    while(1) 
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
+  
+
   else{
-    xTaskCreate(shellTask, "Shell Task", 4096, &shellParams, 1, &serialParams.shellTaskHandle);
-    xTaskCreate(lcdTask, "LCD Task", 2048, &lcdParams, 1, NULL);
-    xTaskCreate(serialInputTask, "Serial Task", 2048, &serialParams, 1, NULL);
+    Serial.println("Tasks starting...");
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    xTaskCreate(shellTask, "Shell Task", 8192, &shellParams, 1, &serialParams.shellTaskHandle);
+    Serial.printf("Shell Task Handle: %p\n", serialParams.shellTaskHandle);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    xTaskCreate(lcdTask, "LCD Task", 2048, &lcdParams, 1, &lcdHandle);
+    Serial.printf("LCD Task Handle: %p\n", lcdHandle);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    xTaskCreate(serialInputTask, "Serial Task", 2048, &serialParams, 1, &serialHandle);
+    Serial.printf("Serial Task Handle: %p\n", serialHandle);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     
   }
 
