@@ -2,30 +2,56 @@
 #include "serial.h"
 #include "lcd.h"
 
-inline void handleCommand(const char * command, size_t length, TaskHandle_t * currentTask = NULL, ShellTaskParams * shellParams = NULL){
+//TODO:
+/*
+  - Implement command functions
+  - Implement debug task for handling Serial output safely
+  - Clean up the code, and divide to appropriate functions
+  - Change started tasks to use the second core
+  - Fix bugs with task notifications and input handling
+*/
+
+TaskHandle_t shellTaskHandle = NULL;
+
+//Not yet used
+void notifyExitTask(TaskHandle_t shellTaskHandle, int returnCode)
+{
+  Serial.printf("shellTaksHandle: %p\n", shellTaskHandle);
+  Serial.println("Shell Task: Notifying shell task of exit.");
+  xTaskNotify(shellTaskHandle, returnCode, eNoAction);
+}
+
+void handleCommand(const char * command, size_t length, TaskHandle_t * currentTask, ShellTaskParams * shellParams = NULL)
+{
   Serial.printf("Shell Task (Handle cmd): Handling command: %s\n", command);
   
   char cmd[32] = {0};
   char args[32] = {0};
 
-  for (size_t i = 0; i < length; i++){
+  for (size_t i = 0; i < length; i++)
+  {
     //Serial.printf("%c", command[i]);
-    if(command[i] == ' '){
+    if(command[i] == ' ')
+    {
       strncpy(cmd, command, i);
       cmd[i] = '\0';
       strncpy(args, command + i + 1, length - i - 1);
       break;
     }
   }
-  if(args == NULL || strlen(args) == 0){
+  if(args == NULL || strlen(args) == 0)
+  {
     strncpy(cmd, command, length);
     //cmd[length] = '\0';
   }
-  for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++){
-    if(strcmp(cmd, commands[i].command) == 0){
+  for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
+  {
+    if(strcmp(cmd, commands[i].command) == 0)
+    {
       Serial.printf("Shell Task (Handle cmd): Found command: %s\n", commands[i].command);
-      if(commands[i].function != NULL){
-        commands[i].function((void *)args);
+      if(commands[i].function != NULL)
+      {
+        //commands[i].function((void *)args);
         Serial.printf("Shell Task (Handle cmd): Launching command %p as a new task.\n", commands[i].function);
         vTaskDelay(500 / portTICK_PERIOD_MS);
         xTaskCreatePinnedToCore(
@@ -35,24 +61,94 @@ inline void handleCommand(const char * command, size_t length, TaskHandle_t * cu
           (void *)args,
           (UBaseType_t)1,
           currentTask,
-          2
+          1
         );
-      }else{
+        Serial.printf("Shell Task (Handle cmd): Launched command %s as a new task %p.\n", commands[i].command, *currentTask);
+        //Serial.printf("Handle cmd, started task state: %", vTaskGetInfo);
+      }else
+      {
         Serial.printf("Shell Task (Handle cmd): Command %s not implemented yet.\n", commands[i].command);
 
       }
       //return;
     }
+  }/*
+Serial.printf("Shell Task (Handle cmd): Handling command: %s\n", command);
+  char cmd[32] = {0};
+  char args[32] = {0};
+  // ...existing code...
+  for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
+  {
+    if(strcmp(cmd, commands[i].command) == 0)
+    {
+      Serial.printf("Shell Task (Handle cmd): Found command: %s\n", commands[i].command);
+      if(commands[i].function != NULL)
+      {
+        // REMOVE direct synchronous call that deleted shell task:
+        // commands[i].function((void *)args);
+
+        Serial.printf("Shell Task (Handle cmd): Launching command %p as a new task.\n", commands[i].function);
+        xTaskCreatePinnedToCore(
+          (TaskFunction_t)commands[i].function,
+          (const char *)commands[i].command,
+          2048,
+          (void *)shellParams,          // Pass proper params object
+          (UBaseType_t)1,
+          currentTask,
+          1
+        );
+      } else {
+        Serial.printf("Shell Task (Handle cmd): Command %s not implemented yet.\n", commands[i].command);
+      }
+      break;
+    }
   }
+
+  Serial.printf("Shell Task (Handle cmd): Handling command: %s\n", command);
+  char cmd[32] = {0};
+  char args[32] = {0};
+  // ...existing code...
+  for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
+  {
+    if(strcmp(cmd, commands[i].command) == 0)
+    {
+      Serial.printf("Shell Task (Handle cmd): Found command: %s\n", commands[i].command);
+      if(commands[i].function != NULL)
+      {
+        // REMOVE direct synchronous call that deleted shell task:
+        // commands[i].function((void *)args);
+
+        Serial.printf("Shell Task (Handle cmd): Launching command %p as a new task.\n", commands[i].function);
+        xTaskCreatePinnedToCore(
+          (TaskFunction_t)commands[i].function,
+          (const char *)commands[i].command,
+          2048,
+          (void *)shellParams,          // Pass proper params object
+          (UBaseType_t)1,
+          currentTask,
+          1
+        );
+      } else {
+        Serial.printf("Shell Task (Handle cmd): Command %s not implemented yet.\n", commands[i].command);
+      }
+      break;
+    }
+  }*/
 }
 
-void helpTask(void * params){
+
+
+void helpTask(void * params)
+{
   char help[32] = "Available commands:\n";
   //if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
   
-  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100))){
-    for (size_t j = 0; j < strlen(help); j++){
-      if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &help[j], pdMS_TO_TICKS(100)) != pdTRUE){
+  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
+  {
+    for (size_t j = 0; j < strlen(help); j++)
+    {
+      if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &help[j], pdMS_TO_TICKS(100)) != pdTRUE)
+      {
         Serial.println("Shell Task: Failed to send help char to outputQueue");
       }
     }
@@ -63,12 +159,15 @@ void helpTask(void * params){
       
         const char * cmd = commands[i].command;
 
-        for (size_t j = 0; j < strlen(help); j++){
-          if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &cmd[j], pdMS_TO_TICKS(100)) != pdTRUE){
+        for (size_t j = 0; j < strlen(help); j++)
+        {
+          if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &cmd[j], pdMS_TO_TICKS(100)) != pdTRUE)
+          {
             Serial.println("Shell Task: Failed to send help char to outputQueue");
           }
         }
-        if(xQueueSend(*((ShellTaskParams *)params)->outputQueue, "\n", pdMS_TO_TICKS(100)) != pdTRUE){
+        if(xQueueSend(*((ShellTaskParams *)params)->outputQueue, "\n", pdMS_TO_TICKS(100)) != pdTRUE)
+        {
           Serial.println("Shell Task: Failed to send help char to outputQueue");
         }
         vTaskDelay(50 / portTICK_PERIOD_MS);
@@ -79,22 +178,38 @@ void helpTask(void * params){
   }
   vTaskDelete(NULL);
 }
-void clearTask(void * params){
-  Serial.println("Shell Task: Clear command executed.");
+void clearTask(void * params)
+{
+  Serial.println("Clear Task executed.");
   // Implement clear functionality if needed
   vTaskDelete(NULL);
 }
-void lsTask(void * params){
-  Serial.println("Shell Task: ls command executed.");
-  // Implement ls functionality if needed
-  vTaskDelay(500 / portTICK_PERIOD_MS);
+void lsTask(void * params)
+{
+  Serial.println("ls task executed.");
+  vTaskDelay(500 / portTICK_PERIOD_MS);/*
+  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
+  {
+    const char * msg = "Testing ls command...\n";
+    for(size_t i = 0; i < strlen(msg); i++)
+    {
+      if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &msg[i], pdMS_TO_TICKS(100)) != pdTRUE)
+      {
+        Serial.println("Shell Task: Failed to send ls char to outputQueue");
+      }
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    xSemaphoreGive(outputQueueMutex);
+  }*/
+  notifyExitTask(shellTaskHandle, 1);
   vTaskDelete(NULL);
 }
 
-void shellTask(void * params){
+void shellTask(void * params)
+{
   //Perhaps we add a list of taskhandels that can be lauchhed from the shell
 
-
+  shellTaskHandle = xTaskGetCurrentTaskHandle();
 
   TaskHandle_t currentTask = NULL;
   ShellTaskParams * shellParams = (ShellTaskParams *) params;
@@ -104,7 +219,8 @@ void shellTask(void * params){
   uint8_t bufferIndex = 0;
   char lastChar = 0;
   
-  while(1){
+  while(1)
+  {
 
 
     char ch;
@@ -149,7 +265,8 @@ void shellTask(void * params){
             }
           }
 
-          if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)) == pdTRUE){
+          if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)) == pdTRUE)
+          {
             // Send backspace to LCD
             if (xQueueSend(*shellParams->outputQueue, &ch, pdMS_TO_TICKS(100)) != pdTRUE)
             {
@@ -181,16 +298,40 @@ void shellTask(void * params){
           //If in a launched task, we can implement task-specific input handling here
           //xTaskNotify(currentTask, (uint32_t)ch, eSetValueWithOverwrite);
           Serial.printf("Shell Task: Input directed to task %p: %c\n", currentTask, ch);
-          if(currentTask == NULL)
+          //if(currentTask == NULL)
+          //{
+            //Serial.println("Shell Task: Current task is NULL!");
+          //}
+          if(xTaskNotifyWait(0, 0, (uint32_t*)&ch, pdMS_TO_TICKS(100)) == pdTRUE)
           {
-            Serial.println("Shell Task: Current task is NULL!");
+            //Serial.println("Shell Task: Failed to notify current task with input char");
+            char msg[32] = "Task returned with code: ";
+            itoa((int)ch, msg + strlen(msg), 10);
+            
+            Serial.printf("Shell Task: notify returned with");
+            
+            if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
+            {
+              for(size_t i = 0; i < strlen(msg); i++)
+              {
+                if (xQueueSend(*shellParams->outputQueue, &msg[i], pdMS_TO_TICKS(100)) != pdTRUE)
+                {
+                  Serial.println("Shell Task: Failed to send char to outputQueue");
+                }
+                vTaskDelay(10 / portTICK_PERIOD_MS);
+              }
+              xSemaphoreGive(outputQueueMutex);
+            }
+            currentTask = NULL; //Return to shell mode
           }
+
           //xTaskNotify(currentTask, (uint32_t)ch, eSetValueWithOverwrite);
 
         }
 
 
-      }else
+      }
+      else
       {
         xSemaphoreGive(inputQueueMutex);
         //Serial.println("Shell Task: No char received from queue");
