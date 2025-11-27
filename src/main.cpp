@@ -5,11 +5,10 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-#include <SD.h>
-
 #include "lcd.h"
 #include "serial.h"
 #include "shell.h"
+#include "filesys.h"
 
 volatile SemaphoreHandle_t inputQueueMutex = NULL;
 volatile SemaphoreHandle_t outputQueueMutex = NULL;
@@ -29,17 +28,6 @@ typedef struct {
 */
 
 
-typedef struct {
-  TaskHandle_t shellTaskHandle;
-  const char * basePath;
-
-} FileSystemArgs;
-
-void fileSystemTask(void * params){
-
-}
-
-
 void setup(){
   // put your setup code here, to run once: 
   Serial.begin(115200);
@@ -55,6 +43,11 @@ void setup(){
   TaskHandle_t serialHandle = NULL;
 
   vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+  static FileSystemTaskParams fsParams = {
+    .shellTaskHandle = NULL,
+    .basePath = "/"
+  };
 
   //memset(displayBuffer, ' ', sizeof(displayBuffer));
   static ShellTaskParams shellParams = {
@@ -83,18 +76,20 @@ void setup(){
 
   else{
     Serial.println("Tasks starting...");
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
     xTaskCreate(shellTask, "Shell Task", 8192, &shellParams, 1, &serialParams.shellTaskHandle);
     Serial.printf("Shell Task Handle: %p\n", serialParams.shellTaskHandle);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
     xTaskCreate(lcdTask, "LCD Task", 2048, &lcdParams, 1, &lcdHandle);
     Serial.printf("LCD Task Handle: %p\n", lcdHandle);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
     xTaskCreate(serialInputTask, "Serial Task", 2048, &serialParams, 1, &serialHandle);
     Serial.printf("Serial Task Handle: %p\n", serialHandle);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+
+    xTaskCreate(fileSystemTask, "File System Task", 4096, &fsParams, 1, &fsParams.shellTaskHandle);
     
   }
 

@@ -34,7 +34,7 @@ void tasksTask(void * params);
 void killTask(void * params);
 void rebootTask(void * params);
 
-void notifyExitTask(TaskHandle_t shellTaskHandle);
+void t_return(TaskHandle_t shellTaskHandle);
 
 void shellTask(void * params);
 void handleCommand(const char * command, size_t length, TaskHandle_t * currentTask = NULL);
