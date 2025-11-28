@@ -46,7 +46,7 @@ void setup(){
 
   static FileSystemTaskParams fsParams = {
     .shellTaskHandle = NULL,
-    .basePath = "/"
+    .basePath = "/",
   };
 
   //memset(displayBuffer, ' ', sizeof(displayBuffer));
@@ -90,6 +90,8 @@ void setup(){
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
     xTaskCreate(fileSystemTask, "File System Task", 4096, &fsParams, 1, &fsParams.shellTaskHandle);
+    Serial.printf("File System Task Handle: %p\n", fsParams.shellTaskHandle);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
     
   }
 

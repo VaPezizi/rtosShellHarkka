@@ -1,55 +1,236 @@
 #include "filesys.h"
+#include "shell.h"
 
 void fileSystemTask(void * params)
 {
-    SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
 
-    if (!SD_MMC.begin("/sdcard", true, true, SDMMC_FREQ_DEFAULT, 5)) {
+    // Littlefs defined in LittleFS.cpp
+    if(!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)){
+        Serial.println("LittleFS Mount Failed");
+        t_return(((FileSystemTaskParams *)params)->shellTaskHandle, -1);
+    }
+    Serial.println("LittleFS Mounted Successfully");
 
-      Serial.println("Card Mount Failed");
+    //createDir(LittleFS, "/testi");
+    //writeFile(LittleFS, "/testi/tiedosto.txt", "Hello from LittleFS!\n");
+    listDir(LittleFS, "/", 1);
+    //deleteFile(LittleFS, "/testfile.bin");
+    // readFile(LittleFS, "/testi/tiedosto.txt");
+    // deleteFile(LittleFS, "/testi/tiedosto.txt");
+    // removeDir(LittleFS, "/testi");
 
-      return;
+    //testFileIO(LittleFS, "/testfile.bin");
+    while(1){
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     }
-
-    uint8_t cardType = SD_MMC.cardType();
-
-    if(cardType == CARD_NONE){
-
-        Serial.println("No SD_MMC card attached");
-
-        return;
-
-    }
-
-
-    Serial.print("SD_MMC Card Type: ");
-
-    if(cardType == CARD_MMC){
-
-        Serial.println("MMC");
-
-    } else if(cardType == CARD_SD){
-
-        Serial.println("SDSC");
-
-    } else if(cardType == CARD_SDHC){
-
-        Serial.println("SDHC");
-
-    } else {
-
-        Serial.println("UNKNOWN");
-
-    }
-
-
-    uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
-
-    Serial.printf("SD_MMC Card Size: %lluMB\n", cardSize);
 
     vTaskDelete(NULL);
+}
 
+/* TEST */
 
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels)
+{
+    File root = fs.open(dirname);
+    if(!root)
+    {
+        //Serial.println("- failed to open directory");
+        return;
+    }
+    if(!root.isDirectory())
+    {
+        //Serial.println(" - not a directory");
+        return;
+    }
 
+    File file = root.openNextFile();
+    while(file)
+    {
+        if(file.isDirectory())
+        {
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if(levels)
+            {
+                listDir(fs, file.path(), levels -1);
+            }
+        } else 
+        {
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+        }
+        file = root.openNextFile();
+    }
+}
+
+void createDir(fs::FS &fs, const char * path)
+{
+    Serial.printf("Creating Dir: %s\n", path);
+    if(fs.mkdir(path))
+    {
+        Serial.println("Dir created");
+    }else 
+    {
+        Serial.println("mkdir failed");
+    }
+}
+
+void removeDir(fs::FS &fs, const char * path)
+{
+    Serial.printf("Removing Dir: %s\n", path);
+    if(fs.rmdir(path))
+    {
+        Serial.println("Dir removed");
+    } else 
+    {
+        Serial.println("rmdir failed");
+    }
+}
+
+void readFile(fs::FS &fs, const char * path)
+{
+    Serial.printf("Reading file: %s\r\n", path);
+
+    File file = fs.open(path);
+    if(!file || file.isDirectory())
+    {
+        Serial.println("- failed to open file for reading");
+        return;
+    }
+
+    Serial.println("- read from file:");
+    while(file.available())
+    {
+        Serial.write(file.read());
+    }
+    file.close();
+}
+
+void writeFile(fs::FS &fs, const char * path, const char * message)
+{
+    Serial.printf("Writing file: %s\r\n", path);
+
+    File file = fs.open(path, FILE_WRITE);
+    if(!file)
+    {
+        Serial.println("- failed to open file for writing");
+        return;
+    }
+    if(file.print(message))
+    {
+        Serial.println("- file written");
+    } else 
+    {
+        Serial.println("- write failed");
+    }
+    file.close();
+}
+
+void appendFile(fs::FS &fs, const char * path, const char * message)
+{
+    Serial.printf("Appending to file: %s\r\n", path);
+
+    File file = fs.open(path, FILE_APPEND);
+    if(!file)
+    {
+        Serial.println("- failed to open file for appending");
+        return;
+    }
+    if(file.print(message))
+    {
+        Serial.println("- message appended");
+    } else 
+    {
+        Serial.println("- append failed");
+    }
+    file.close();
+}
+
+void renameFile(fs::FS &fs, const char * path1, const char * path2)
+{
+    Serial.printf("Renaming file %s to %s\r\n", path1, path2);
+    if (fs.rename(path1, path2)) 
+    {
+        Serial.println("- file renamed");
+    } else 
+    {
+        Serial.println("- rename failed");
+    }
+}
+
+void deleteFile(fs::FS &fs, const char * path)
+{
+    Serial.printf("Deleting file: %s\r\n", path);
+    if(fs.remove(path))
+    {
+        Serial.println("- file deleted");
+    } else 
+    {
+        Serial.println("- delete failed");
+    }
+}
+
+void testFileIO(fs::FS &fs, const char * path)
+{
+    Serial.printf("Testing file I/O with %s\r\n", path);
+
+    static uint8_t buf[512];
+    size_t len = 0;
+    File file = fs.open(path, FILE_WRITE);
+    if(!file)
+    {
+        Serial.println("- failed to open file for writing");
+        return;
+    }
+
+    size_t i;
+    Serial.print("- writing" );
+    uint32_t start = millis();
+    for(i=0; i<2048; i++)
+    {
+        if ((i & 0x001F) == 0x001F){
+          Serial.print(".");
+        }
+        file.write(buf, 512);
+    }
+    Serial.println("");
+    uint32_t end = millis() - start;
+    Serial.printf(" - %u bytes written in %u ms\r\n", 2048 * 512, end);
+    file.close();
+
+    file = fs.open(path);
+    start = millis();
+    end = start;
+    i = 0;
+    if(file && !file.isDirectory())
+    {
+        len = file.size();
+        size_t flen = len;
+        start = millis();
+        Serial.print("- reading" );
+        while(len)
+        {
+            size_t toRead = len;
+            if(toRead > 512)
+            {
+                toRead = 512;
+            }
+            file.read(buf, toRead);
+            if ((i++ & 0x001F) == 0x001F)
+            {
+              Serial.print(".");
+            }
+            len -= toRead;
+        }
+        Serial.println("");
+        end = millis() - start;
+        Serial.printf("- %u bytes read in %u ms\r\n", flen, end);
+        file.close();
+    } else 
+    {
+        Serial.println("- failed to open file for reading");
+    }
 }
