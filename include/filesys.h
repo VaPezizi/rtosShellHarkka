@@ -51,7 +51,7 @@ typedef struct
 
 extern SemaphoreHandle_t fsMutex;
 extern QueueHandle_t fsInQueue;
-extern QueueHandle_t fsOutQueue;
+//rn QueueHandle_t fsOutQueue;
 
 // https://randomnerdtutorials.com/esp32-write-data-littlefs-arduino/
 int listDir(fs::FS &fs, const char * dirname, uint8_t levels,FileSystemRequest * fsReq);

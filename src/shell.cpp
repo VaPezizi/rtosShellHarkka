@@ -226,7 +226,7 @@ void lsTask(void * params)
           output_to_que(&ch, 1, sp);
       } else
        {
-          break;
+          ;
       }
   }
   t_return(shellTaskHandle, 0);

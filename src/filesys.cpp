@@ -1,6 +1,9 @@
 #include "filesys.h"
 #include "shell.h"
 
+SemaphoreHandle_t fsMutex = NULL;
+QueueHandle_t fsInQueue = NULL;
+
 void fileSystemTask(void * params)
 {
 
@@ -138,7 +141,7 @@ int createDir(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
     }
 }
 
-int removeDir(fs::FS &fs, const char * path)
+int removeDir(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 {
     Serial.printf("Removing Dir: %s\n", path);
     if(fs.rmdir(path))
