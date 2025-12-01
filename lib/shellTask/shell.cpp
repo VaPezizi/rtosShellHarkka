@@ -1,7 +1,7 @@
 #include "shell.h"
 #include "serial.h"
 #include "lcd.h"
-
+#include "filesys.h"
 //TODO:
 /*
   - Implement command functions
@@ -71,12 +71,12 @@ void handleCommand(const char * command, size_t length, TaskHandle_t * currentTa
       {
         //commands[i].function((void *)args);
         //Serial.printf("Shell Task (Handle cmd): Launching command %p as a new task.\n", commands[i].function);
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
         xTaskCreatePinnedToCore(
           (TaskFunction_t)commands[i].function,
           (const char *)commands[i].command,
           2048,
-          (void *)args,
+          (void *)shellParams,
           (UBaseType_t)1,
           currentTask,
           1
@@ -204,21 +204,31 @@ void clearTask(void * params)
 }
 void lsTask(void * params)
 {
-  Serial.println("ls task executed.");
-  vTaskDelay(500 / portTICK_PERIOD_MS);/*
-  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
-  {
-    const char * msg = "Testing ls command...\n";
-    for(size_t i = 0; i < strlen(msg); i++)
-    {
-      if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &msg[i], pdMS_TO_TICKS(100)) != pdTRUE)
+  ShellTaskParams * sp = (ShellTaskParams *) params;
+
+  vTaskDelay(500 / portTICK_PERIOD_MS);
+  FileSystemRequest req = {};
+  req.operation   = FS_OP_LIST;
+  strncpy(req.path, "/", sizeof(req.path)-1);
+  req.levels      = 1;
+  req.outputQueue = *sp->outputQueue;          // reuse shell’s output queue
+  req.notifyTask  = xTaskGetCurrentTaskHandle();
+
+  xQueueSend(fsInQueue, &req, portMAX_DELAY);
+
+  // Wait for completion marker (optional)
+  for(;;){
+      char ch;
+      if(xQueueReceive(req.outputQueue, &ch, pdMS_TO_TICKS(1000)) == pdTRUE)
       {
-        Serial.println("Shell Task: Failed to send ls char to outputQueue");
+          if(ch == '\x04') break; // EOT
+          // forward to LCD or serial as your pipeline requires
+          output_to_que(&ch, 1, sp);
+      } else
+       {
+          break;
       }
-      vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-    xSemaphoreGive(outputQueueMutex);
-  }*/
+  }
   t_return(shellTaskHandle, 0);
   
 }

@@ -9,11 +9,14 @@ void fileSystemTask(void * params)
         Serial.println("LittleFS Mount Failed");
         t_return(((FileSystemTaskParams *)params)->shellTaskHandle, -1);
     }
-    Serial.println("LittleFS Mounted Successfully");
+    //Serial.println("LittleFS Mounted Successfully");
+    fsMutex = xSemaphoreCreateMutex();
+    fsInQueue = xQueueCreate(10, sizeof(FileSystemRequest));
+   // fsOutQueue = xQueueCreate(40, sizeof(char));
 
     //createDir(LittleFS, "/testi");
     //writeFile(LittleFS, "/testi/tiedosto.txt", "Hello from LittleFS!\n");
-    listDir(LittleFS, "/", 1);
+    //listDir(LittleFS, "/", 1);
     //deleteFile(LittleFS, "/testfile.bin");
     // readFile(LittleFS, "/testi/tiedosto.txt");
     // deleteFile(LittleFS, "/testi/tiedosto.txt");
@@ -21,8 +24,43 @@ void fileSystemTask(void * params)
 
     //testFileIO(LittleFS, "/testfile.bin");
     while(1){
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        FileSystemRequest req;
+        if(xQueueReceive(fsInQueue, &req, portMAX_DELAY) == pdTRUE){
+            //Got a request
+            switch(req.operation){
+                case FS_OP_LIST:
+                    listDir(LittleFS, req.path, req.levels, &req);
+                    break;
+                case FS_OP_READ:
+                    readFile(LittleFS, req.path, &req);
+                    break;
+                case FS_OP_WRITE:
+                    writeFile(LittleFS, req.path, req.data, &req);
+                    break;
+                case FS_OP_DELETE:
+                    deleteFile(LittleFS, req.path, &req);
+                    break;
+                case FS_OP_MKDIR:
+                    createDir(LittleFS, req.path, &req);
+                    break;
+                case FS_OP_RMDIR:
+                    removeDir(LittleFS, req.path, &req);
+                    break;
+                case FS_OP_RENAME:
+                    //req.levels is used as the destination path pointer here
+                    renameFile(LittleFS, req.path, (const char *)req.levels, &req);
+                    break;
+                default:
+                    break;
+            }
+            //Notify the requesting task if needed
+            char done = '\x04';
+            xQueueSend(req.outputQueue, &done, 0);
+            if(req.notifyTask != NULL){
+                xTaskNotifyGive(req.notifyTask);
+            }
 
+        }
     }
 
     vTaskDelete(NULL);
@@ -30,18 +68,18 @@ void fileSystemTask(void * params)
 
 /* TEST */
 
-void listDir(fs::FS &fs, const char * dirname, uint8_t levels)
+int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest * fsReq)
 {
     File root = fs.open(dirname);
     if(!root)
     {
         //Serial.println("- failed to open directory");
-        return;
+        return -1;
     }
     if(!root.isDirectory())
     {
         //Serial.println(" - not a directory");
-        return;
+        return -1;
     }
 
     File file = root.openNextFile();
@@ -49,128 +87,138 @@ void listDir(fs::FS &fs, const char * dirname, uint8_t levels)
     {
         if(file.isDirectory())
         {
-            Serial.print("  DIR : ");
-            Serial.println(file.name());
+            //Serial.print("  DIR : ");
+            const char * hdr = "DIR: ";
+            for(size_t i=0;i<strlen(hdr);i++) 
+                xQueueSend(fsReq->outputQueue,&hdr[i],0);
+            for(size_t i=0;i<strlen(file.name());i++) 
+                xQueueSend(fsReq->outputQueue,&file.name()[i],0);
+            xQueueSend(fsReq->outputQueue,"\n",0);
+            //Serial.println(file.name());
+            
             if(levels)
             {
-                listDir(fs, file.path(), levels -1);
+                listDir(fs, file.path(), levels -1, fsReq);
             }
         } else 
         {
-            Serial.print("  FILE: ");
-            Serial.print(file.name());
-            Serial.print("\tSIZE: ");
-            Serial.println(file.size());
+            //Serial.print("  FILE: ");
+            const char * hdr = "FILE: ";
+            for(size_t i=0;i<strlen(hdr);i++) 
+                xQueueSend(fsReq->outputQueue,&hdr[i],0);
+            for(size_t i=0;i<strlen(file.name());i++) 
+                xQueueSend(fsReq->outputQueue,&file.name()[i],0);
+            const char * sep = "\tSIZE: ";
+            //xQueueSend(fsOutQueue,"\tSIZE: ",0);
+            for (size_t i = 0; i < strlen(sep);i++)
+                xQueueSend(fsReq->outputQueue,&sep[i],0);
+            char sizeStr[16];
+            snprintf(sizeStr, sizeof(sizeStr), "%u\n", file.size());
+            for(size_t i=0;i<strlen(sizeStr);i++) 
+                xQueueSend(fsReq->outputQueue,&sizeStr[i],0);
+            //Serial.print("\tSIZE: ");
+            //Serial.println(file.size());
         }
         file = root.openNextFile();
     }
+    return 0;
 }
 
-void createDir(fs::FS &fs, const char * path)
+int createDir(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 {
     Serial.printf("Creating Dir: %s\n", path);
     if(fs.mkdir(path))
     {
-        Serial.println("Dir created");
+        return 1;
+        // Serial.println("Dir created");
     }else 
     {
-        Serial.println("mkdir failed");
+        return -1;
+        //Serial.println("mkdir failed");
     }
 }
 
-void removeDir(fs::FS &fs, const char * path)
+int removeDir(fs::FS &fs, const char * path)
 {
     Serial.printf("Removing Dir: %s\n", path);
     if(fs.rmdir(path))
     {
-        Serial.println("Dir removed");
-    } else 
+        return 1;
+    }
+    else
     {
-        Serial.println("rmdir failed");
+        return -1;
     }
 }
 
-void readFile(fs::FS &fs, const char * path)
+int readFile(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 {
-    Serial.printf("Reading file: %s\r\n", path);
-
     File file = fs.open(path);
-    if(!file || file.isDirectory())
-    {
-        Serial.println("- failed to open file for reading");
-        return;
+    if(!file || file.isDirectory()){
+        const char *err = "ERR: open for read\n";
+        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        return -1;
     }
-
-    Serial.println("- read from file:");
-    while(file.available())
-    {
-        Serial.write(file.read());
+    while(file.available()){
+        char c = (char)file.read();
+        xQueueSend(fsReq->outputQueue, &c, 0);
     }
     file.close();
+    char nl='\n'; xQueueSend(fsReq->outputQueue,&nl,0);
+    return 1;
 }
 
-void writeFile(fs::FS &fs, const char * path, const char * message)
+int writeFile(fs::FS &fs, const char * path, const char * message, FileSystemRequest * fsReq)
 {
-    Serial.printf("Writing file: %s\r\n", path);
-
     File file = fs.open(path, FILE_WRITE);
-    if(!file)
-    {
-        Serial.println("- failed to open file for writing");
-        return;
+    if(!file){
+        const char *err = "ERR: open for write\n";
+        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        return -1;
     }
-    if(file.print(message))
-    {
-        Serial.println("- file written");
-    } else 
-    {
-        Serial.println("- write failed");
-    }
+    bool ok = file.print(message ? message : "");
     file.close();
+    const char *msg = ok ? "OK: write\n" : "ERR: write\n";
+    for(size_t i=0;i<strlen(msg);i++) xQueueSend(fsReq->outputQueue, &msg[i], 0);
+    return ok ? 1 : -1;
 }
 
-void appendFile(fs::FS &fs, const char * path, const char * message)
+int appendFile(fs::FS &fs, const char * path, const char * message, FileSystemRequest * fsReq)
 {
-    Serial.printf("Appending to file: %s\r\n", path);
-
     File file = fs.open(path, FILE_APPEND);
-    if(!file)
-    {
-        Serial.println("- failed to open file for appending");
-        return;
+    if(!file){
+        const char *err = "ERR: open for append\n";
+        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        return -1;
     }
-    if(file.print(message))
-    {
-        Serial.println("- message appended");
-    } else 
-    {
-        Serial.println("- append failed");
-    }
+    bool ok = file.print(message ? message : "");
     file.close();
+    const char *msg = ok ? "OK: append\n" : "ERR: append\n";
+    for(size_t i=0;i<strlen(msg);i++) xQueueSend(fsReq->outputQueue, &msg[i], 0);
+    return ok ? 1 : -1;
 }
 
-void renameFile(fs::FS &fs, const char * path1, const char * path2)
+int renameFile(fs::FS &fs, const char * path1, const char * path2, FileSystemRequest * fsReq)
 {
-    Serial.printf("Renaming file %s to %s\r\n", path1, path2);
-    if (fs.rename(path1, path2)) 
-    {
-        Serial.println("- file renamed");
-    } else 
-    {
-        Serial.println("- rename failed");
-    }
+    bool ok = fs.rename(path1, path2);
+    const char *hdr = ok ? "OK: rename " : "ERR: rename ";
+    for(size_t i=0;i<strlen(hdr);i++) xQueueSend(fsReq->outputQueue, &hdr[i], 0);
+    for(size_t i=0;i<strlen(path1);i++) xQueueSend(fsReq->outputQueue, &path1[i], 0);
+    const char *sep = " -> ";
+    for(size_t i=0;i<strlen(sep);i++) xQueueSend(fsReq->outputQueue, &sep[i], 0);
+    for(size_t i=0;i<strlen(path2);i++) xQueueSend(fsReq->outputQueue, &path2[i], 0);
+    char nl='\n'; xQueueSend(fsReq->outputQueue,&nl,0);
+    return ok ? 1 : -1;
 }
 
-void deleteFile(fs::FS &fs, const char * path)
+int deleteFile(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 {
-    Serial.printf("Deleting file: %s\r\n", path);
-    if(fs.remove(path))
-    {
-        Serial.println("- file deleted");
-    } else 
-    {
-        Serial.println("- delete failed");
-    }
+    bool ok = fs.remove(path);
+    const char *hdr = ok ? "OK: delete " : "ERR: delete ";
+    for(size_t i=0;i<strlen(hdr);i++) xQueueSend(fsReq->outputQueue, &hdr[i], 0);
+    for(size_t i=0;i<strlen(path);i++) xQueueSend(fsReq->outputQueue, &path[i], 0);
+    char nl='\n'; xQueueSend(fsReq->outputQueue,&nl,0);
+    return ok ? 1 : -1;
 }
 
 void testFileIO(fs::FS &fs, const char * path)

@@ -46,7 +46,6 @@ void setup(){
 
   static FileSystemTaskParams fsParams = {
     .shellTaskHandle = NULL,
-    .basePath = "/",
   };
 
   //memset(displayBuffer, ' ', sizeof(displayBuffer));
