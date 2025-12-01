@@ -12,6 +12,7 @@
 */
 
 TaskHandle_t shellTaskHandle = NULL;
+static char currentPath[128] = "/";
 
 void output_to_que(const char * msg, size_t len, ShellTaskParams * params)
 {
@@ -39,6 +40,162 @@ void t_return(TaskHandle_t shellTaskHandle, int returnCode)
   vTaskDelete(NULL);
 }
 
+
+static void output_line(ShellTaskParams * sp, const char * s)
+{
+  output_to_que(s, strlen(s), sp);
+  char nl = '\n';
+  output_to_que(&nl, 1, sp);
+}
+
+static void buildPath(char * dst, size_t dstLen, const char * arg)
+{
+  if(arg[0] == '/' || currentPath[0] == '\0'){
+    strncpy(dst, arg, dstLen-1);
+  } else {
+    if(strcmp(currentPath, "/")==0){
+      snprintf(dst, dstLen, "/%s", arg);
+    } else {
+      snprintf(dst, dstLen, "%s/%s", currentPath, arg);
+    }
+  }
+  dst[dstLen-1] = 0;
+}
+
+static void fsStream(FsOp op, const char * path, const char * data, uint8_t levels, ShellTaskParams * sp)
+{
+  FileSystemRequest req = {};
+  req.operation   = op;
+  strncpy(req.path, path, sizeof(req.path)-1);
+  req.data        = data;
+  req.levels      = levels;
+  req.outputQueue = *sp->outputQueue;
+  req.notifyTask  = xTaskGetCurrentTaskHandle();
+  xQueueSend(fsInQueue, &req, portMAX_DELAY);
+  for(;;){
+    char ch;
+    if(xQueueReceive(req.outputQueue, &ch, pdMS_TO_TICKS(2000)) == pdTRUE){
+      if(ch == '\x04') break;
+      output_to_que(&ch, 1, sp);
+    } else break;
+  }
+}
+void helpTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(200)) == pdTRUE){
+    output_to_que("Available commands:", strlen("Available commands:"), sp);
+    char nl='\n'; output_to_que(&nl,1,sp);
+    for(size_t i=0;i<sizeof(commands)/sizeof(Command);i++){
+      const Command &c = commands[i];
+      output_to_que(c.command, strlen(c.command), sp);
+      output_to_que(" - ", 3, sp);
+      output_to_que(c.description, strlen(c.description), sp);
+      output_to_que(&nl,1,sp);
+    }
+    xSemaphoreGive(outputQueueMutex);
+  }
+  t_return(shellTaskHandle, 0);
+}
+
+void catTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(sp->argBuf[0] == 0){ output_line(sp, "cat: missing file"); t_return(shellTaskHandle, -1); return; }
+  char path[128]; buildPath(path, sizeof(path), sp->argBuf);
+  fsStream(FS_OP_READ, path, NULL, 0, sp);
+  t_return(shellTaskHandle, 0);
+}
+
+void pwdTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  output_line(sp, currentPath);
+  t_return(shellTaskHandle, 0);
+}
+
+void cdTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(sp->argBuf[0] == 0){ output_line(sp, "cd: missing path"); t_return(shellTaskHandle,-1); return; }
+  // naive: just set path (validation could be added via FS_OP_LIST)
+  if(strcmp(sp->argBuf, "/")==0){
+    strcpy(currentPath, "/");
+  } else {
+    char newPath[128]; buildPath(newPath, sizeof(newPath), sp->argBuf);
+    // strip trailing slash
+    size_t l = strlen(newPath);
+    if(l>1 && newPath[l-1]=='/') newPath[l-1]=0;
+    strncpy(currentPath, newPath, sizeof(currentPath)-1);
+  }
+  output_line(sp, currentPath);
+  t_return(shellTaskHandle, 0);
+}
+
+void touchTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(sp->argBuf[0]==0){ output_line(sp, "touch: missing file"); t_return(shellTaskHandle,-1); return; }
+  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  fsStream(FS_OP_WRITE, path, "", 0, sp);
+  t_return(shellTaskHandle, 0);
+}
+
+void mkdirTask(void * params){
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(sp->argBuf[0]==0){ output_line(sp,"mkdir: missing dir"); t_return(shellTaskHandle,-1); return; }
+  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  fsStream(FS_OP_MKDIR, path, NULL, 0, sp);
+  t_return(shellTaskHandle, 0);
+}
+
+void rmTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(sp->argBuf[0]==0){ output_line(sp,"rm: missing file"); t_return(shellTaskHandle,-1); return; }
+  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  fsStream(FS_OP_DELETE, path, NULL, 0, sp);
+  t_return(shellTaskHandle, 0);
+}
+
+void rmdirTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  if(sp->argBuf[0]==0){ output_line(sp,"rmdir: missing dir"); t_return(shellTaskHandle,-1); return; }
+  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  fsStream(FS_OP_RMDIR, path, NULL, 0, sp);
+  t_return(shellTaskHandle, 0);
+}
+
+void tasksTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+#if (configUSE_TRACE_FACILITY == 1) && (configUSE_STATS_FORMATTING_FUNCTIONS == 1)
+  char buf[512]; vTaskList(buf);
+  output_line(sp, "Name          State Prio Stack Num");
+  output_to_que(buf, strlen(buf), sp);
+#else
+  output_line(sp, "Task listing not enabled (trace off)");
+#endif
+  t_return(shellTaskHandle, 0);
+}
+
+void killTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  output_line(sp, "kill: not implemented");
+  t_return(shellTaskHandle, 0);
+}
+
+void rebootTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  output_line(sp, "Rebooting...");
+  t_return(shellTaskHandle, 0);
+  ESP.restart();
+}
+
+
 void handleCommand(const char * command, size_t length, TaskHandle_t * currentTask, ShellTaskParams * shellParams = NULL)
 {
   Serial.printf("Shell Task (Handle cmd): Handling command: %s\n", command);
@@ -57,11 +214,16 @@ void handleCommand(const char * command, size_t length, TaskHandle_t * currentTa
       break;
     }
   }
-  if(args == NULL || strlen(args) == 0)
-  {
+  // ...existing code (parsing)...
+  if(args == NULL || strlen(args) == 0){
     strncpy(cmd, command, length);
-    //cmd[length] = '\0';
   }
+  if(shellParams){
+    memset(shellParams->argBuf, 0, sizeof(shellParams->argBuf));
+    strncpy(shellParams->argBuf, args, sizeof(shellParams->argBuf)-1);
+  }
+  // ...existing code...
+
   for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
   {
     if(strcmp(cmd, commands[i].command) == 0)
@@ -90,112 +252,10 @@ void handleCommand(const char * command, size_t length, TaskHandle_t * currentTa
       }
       //return;
     }
-  }/*
-Serial.printf("Shell Task (Handle cmd): Handling command: %s\n", command);
-  char cmd[32] = {0};
-  char args[32] = {0};
-  // ...existing code...
-  for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
-  {
-    if(strcmp(cmd, commands[i].command) == 0)
-    {
-      Serial.printf("Shell Task (Handle cmd): Found command: %s\n", commands[i].command);
-      if(commands[i].function != NULL)
-      {
-        // REMOVE direct synchronous call that deleted shell task:
-        // commands[i].function((void *)args);
-
-        Serial.printf("Shell Task (Handle cmd): Launching command %p as a new task.\n", commands[i].function);
-        xTaskCreatePinnedToCore(
-          (TaskFunction_t)commands[i].function,
-          (const char *)commands[i].command,
-          2048,
-          (void *)shellParams,          // Pass proper params object
-          (UBaseType_t)1,
-          currentTask,
-          1
-        );
-      } else {
-        Serial.printf("Shell Task (Handle cmd): Command %s not implemented yet.\n", commands[i].command);
-      }
-      break;
-    }
   }
 
-  Serial.printf("Shell Task (Handle cmd): Handling command: %s\n", command);
-  char cmd[32] = {0};
-  char args[32] = {0};
-  // ...existing code...
-  for(size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
-  {
-    if(strcmp(cmd, commands[i].command) == 0)
-    {
-      Serial.printf("Shell Task (Handle cmd): Found command: %s\n", commands[i].command);
-      if(commands[i].function != NULL)
-      {
-        // REMOVE direct synchronous call that deleted shell task:
-        // commands[i].function((void *)args);
-
-        Serial.printf("Shell Task (Handle cmd): Launching command %p as a new task.\n", commands[i].function);
-        xTaskCreatePinnedToCore(
-          (TaskFunction_t)commands[i].function,
-          (const char *)commands[i].command,
-          2048,
-          (void *)shellParams,          // Pass proper params object
-          (UBaseType_t)1,
-          currentTask,
-          1
-        );
-      } else {
-        Serial.printf("Shell Task (Handle cmd): Command %s not implemented yet.\n", commands[i].command);
-      }
-      break;
-    }
-  }*/
 }
 
-
-
-void helpTask(void * params)
-{
-  char help[32] = "Available commands:\n";
-  //if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
-  
-  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
-  {
-    for (size_t j = 0; j < strlen(help); j++)
-    {
-      if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &help[j], pdMS_TO_TICKS(100)) != pdTRUE)
-      {
-        //Serial.println("Shell Task: Failed to send help char to outputQueue");
-      }
-    }
-    //vTaskDelay(1000 / portTICK_PERIOD_MS);
-    
-    for (size_t i = 0; i < sizeof(commands) / sizeof(Command); i++)
-    {
-      
-        const char * cmd = commands[i].command;
-
-        for (size_t j = 0; j < strlen(help); j++)
-        {
-          if (xQueueSend(*((ShellTaskParams *)params)->outputQueue, &cmd[j], pdMS_TO_TICKS(100)) != pdTRUE)
-          {
-            Serial.println("Shell Task: Failed to send help char to outputQueue");
-          }
-        }
-        if(xQueueSend(*((ShellTaskParams *)params)->outputQueue, "\n", pdMS_TO_TICKS(100)) != pdTRUE)
-        {
-          Serial.println("Shell Task: Failed to send help char to outputQueue");
-        }
-        vTaskDelay(50 / portTICK_PERIOD_MS);
-    }
-    xSemaphoreGive(outputQueueMutex);
-  }else{
-    Serial.println("Shell Task: Failed to take outputQueueMutex in helpTask");
-  }
-  t_return(shellTaskHandle, 0);
-}
 void clearTask(void * params)
 {
   Serial.println("Clear Task executed.");
@@ -331,7 +391,7 @@ void shellTask(void * params)
               }
               xSemaphoreGive(outputQueueMutex);
             }*/
-            output_to_que(msg, strlen(msg), shellParams);
+            //output_to_que(msg, strlen(msg), shellParams);
             currentTask = NULL; //Return to shell mode
           }
         }

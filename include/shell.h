@@ -8,6 +8,7 @@
 typedef struct {
   const char * command;
   void (*function)(void * params);
+  const char * description;
 } Command;
 
 typedef struct {
@@ -16,9 +17,8 @@ typedef struct {
   TaskHandle_t lcdTaskHandle;
   TaskHandle_t fileSystemTaskHandle;
   //TaskHandle_t taskHandles;
+  char argBuf[64];
 } ShellTaskParams;
-
-
 
 void helpTask(void * params);
 void clearTask(void * params);
@@ -40,17 +40,17 @@ void shellTask(void * params);
 void handleCommand(const char * command, size_t length, TaskHandle_t * currentTask = NULL);
 
 static Command commands[] = {
-  {"help", helpTask},
-  {"clear", clearTask},
-  {"ls", lsTask},
-  {"cat", NULL},
-  {"pwd", NULL},
-  {"cd", NULL},
-  {"touch", NULL},
-  {"mkdir", NULL},
-  {"rm", NULL},
-  {"rmdir", NULL},
-  {"tasks", NULL},
-  {"kill", NULL},
-  {"reboot", NULL},
+  {"help",  helpTask,   "Show this help"},
+  {"clear", clearTask,  "Clear screen"},
+  {"ls",    lsTask,     "List directory"},
+  {"cat",   catTask,    "Show file contents"},
+  {"pwd",   pwdTask,    "Print working dir"},
+  {"cd",    cdTask,     "Change directory"},
+  {"touch", touchTask,  "Create empty file"},
+  {"mkdir", mkdirTask,  "Create directory"},
+  {"rm",    rmTask,     "Delete file"},
+  {"rmdir", rmdirTask,  "Remove directory"},
+  {"tasks", tasksTask,  "List RTOS tasks"},
+  {"kill",  killTask,   "Kill task (stub)"},
+  {"reboot",rebootTask, "Restart MCU"},
 };

@@ -57,6 +57,11 @@ void lcdTask(void * params){
           vTaskDelay(50 / portTICK_PERIOD_MS);
           continue;
         }
+        if(ch == '\x04'){ //End of transmission
+          xSemaphoreGive(outputQueueMutex);
+          vTaskDelay(50 / portTICK_PERIOD_MS);
+          continue;
+        }
         currentBufIndex++;
         if(currentBufIndex > 16){
           currentBufIndex = 0;
