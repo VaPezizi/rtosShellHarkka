@@ -18,6 +18,7 @@ typedef struct {
   TaskHandle_t fileSystemTaskHandle;
   //TaskHandle_t taskHandles;
   char argBuf[64];
+  QueueHandle_t * fsOutputQueue;
 } ShellTaskParams;
 
 void helpTask(void * params);

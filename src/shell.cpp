@@ -31,7 +31,6 @@ void output_to_que(const char * msg, size_t len, ShellTaskParams * params)
   }
 }
 
-//Not yet used
 void t_return(TaskHandle_t shellTaskHandle, int returnCode)
 {
   Serial.printf("shellTaksHandle: %p\n", shellTaskHandle);
@@ -62,23 +61,23 @@ static void buildPath(char * dst, size_t dstLen, const char * arg)
   dst[dstLen-1] = 0;
 }
 
-static void fsStream(FsOp op, const char * path, const char * data, uint8_t levels, ShellTaskParams * sp)
+static void fsStream(FsOp op, const char * path, const char * data, uint8_t levels, QueueHandle_t * outputQueue, ShellTaskParams * sp)
 {
   FileSystemRequest req = {};
   req.operation   = op;
   strncpy(req.path, path, sizeof(req.path)-1);
   req.data        = data;
   req.levels      = levels;
-  req.outputQueue = *sp->outputQueue;
+  req.outputQueue = *outputQueue;
   req.notifyTask  = xTaskGetCurrentTaskHandle();
   xQueueSend(fsInQueue, &req, portMAX_DELAY);
-  for(;;){
+  /*for(;;){
     char ch;
     if(xQueueReceive(req.outputQueue, &ch, pdMS_TO_TICKS(2000)) == pdTRUE){
       if(ch == '\x04') break;
       output_to_que(&ch, 1, sp);
     } else break;
-  }
+  }*/
 }
 void helpTask(void * params)
 {
@@ -101,9 +100,15 @@ void helpTask(void * params)
 void catTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(sp->argBuf[0] == 0){ output_line(sp, "cat: missing file"); t_return(shellTaskHandle, -1); return; }
+  if(sp->argBuf[0] == 0)
+  { 
+    output_line(sp, "cat: missing file"); 
+    t_return(shellTaskHandle, -1); 
+    return; 
+  }
+
   char path[128]; buildPath(path, sizeof(path), sp->argBuf);
-  fsStream(FS_OP_READ, path, NULL, 0, sp);
+  fsStream(FS_OP_READ, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
 
@@ -117,7 +122,26 @@ void pwdTask(void * params)
 void cdTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(sp->argBuf[0] == 0){ output_line(sp, "cd: missing path"); t_return(shellTaskHandle,-1); return; }
+  if(sp->argBuf[0] == 0)
+  { 
+    output_line(sp, "cd: missing path");
+    t_return(shellTaskHandle,-1); 
+  }
+  
+  uint32_t pathExists = 0;
+  fsStream(FS_OP_LIST, sp->argBuf, NULL, 0, sp->fsOutputQueue,sp);
+  if(xTaskNotifyWait(0, 0,&pathExists, pdMS_TO_TICKS(2000)) == pdTRUE)
+  {
+    Serial.printf("cdTask: pathExists = %u\n", pathExists);
+    if(pathExists == (uint32_t)-1){
+      output_line(sp, "cd: no such directory");
+      t_return(shellTaskHandle, -1);
+    }
+  } else {
+    output_line(sp, "cd: timeout checking directory");
+    t_return(shellTaskHandle, -1);
+  }
+
   // naive: just set path (validation could be added via FS_OP_LIST)
   if(strcmp(sp->argBuf, "/")==0){
     strcpy(currentPath, "/");
@@ -137,7 +161,7 @@ void touchTask(void * params)
   ShellTaskParams * sp = (ShellTaskParams *)params;
   if(sp->argBuf[0]==0){ output_line(sp, "touch: missing file"); t_return(shellTaskHandle,-1); return; }
   char path[128]; buildPath(path,sizeof(path), sp->argBuf);
-  fsStream(FS_OP_WRITE, path, "", 0, sp);
+  fsStream(FS_OP_WRITE, path, "", 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
 
@@ -145,7 +169,7 @@ void mkdirTask(void * params){
   ShellTaskParams * sp = (ShellTaskParams *)params;
   if(sp->argBuf[0]==0){ output_line(sp,"mkdir: missing dir"); t_return(shellTaskHandle,-1); return; }
   char path[128]; buildPath(path,sizeof(path), sp->argBuf);
-  fsStream(FS_OP_MKDIR, path, NULL, 0, sp);
+  fsStream(FS_OP_MKDIR, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
 
@@ -154,7 +178,7 @@ void rmTask(void * params)
   ShellTaskParams * sp = (ShellTaskParams *)params;
   if(sp->argBuf[0]==0){ output_line(sp,"rm: missing file"); t_return(shellTaskHandle,-1); return; }
   char path[128]; buildPath(path,sizeof(path), sp->argBuf);
-  fsStream(FS_OP_DELETE, path, NULL, 0, sp);
+  fsStream(FS_OP_DELETE, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
 
@@ -163,7 +187,7 @@ void rmdirTask(void * params)
   ShellTaskParams * sp = (ShellTaskParams *)params;
   if(sp->argBuf[0]==0){ output_line(sp,"rmdir: missing dir"); t_return(shellTaskHandle,-1); return; }
   char path[128]; buildPath(path,sizeof(path), sp->argBuf);
-  fsStream(FS_OP_RMDIR, path, NULL, 0, sp);
+  fsStream(FS_OP_RMDIR, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
 
@@ -191,8 +215,9 @@ void rebootTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
   output_line(sp, "Rebooting...");
-  t_return(shellTaskHandle, 0);
   ESP.restart();
+  t_return(shellTaskHandle, 0);
+  
 }
 
 
@@ -266,29 +291,23 @@ void lsTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *) params;
 
-  vTaskDelay(500 / portTICK_PERIOD_MS);
-  FileSystemRequest req = {};
-  req.operation   = FS_OP_LIST;
-  strncpy(req.path, "/", sizeof(req.path)-1);
-  req.levels      = 1;
-  req.outputQueue = *sp->outputQueue;          // reuse shell’s output queue
-  req.notifyTask  = xTaskGetCurrentTaskHandle();
 
-  xQueueSend(fsInQueue, &req, portMAX_DELAY);
 
+  fsStream(FS_OP_LIST, currentPath, NULL, 1, sp->fsOutputQueue, sp);
   // Wait for completion marker (optional)
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  
   for(;;){
       char ch;
-      if(xQueueReceive(req.outputQueue, &ch, pdMS_TO_TICKS(1000)) == pdTRUE)
+      if(xQueueReceive(*sp->fsOutputQueue, &ch, pdMS_TO_TICKS(1000)) == pdTRUE)
       {
+          Serial.printf("lsTask: Received char from queue: %d\n", ch);
           if(ch == '\x04') break; // EOT
           // forward to LCD or serial as your pipeline requires
           output_to_que(&ch, 1, sp);
-      } else
-       {
-          ;
       }
   }
+      
   t_return(shellTaskHandle, 0);
   
 }
@@ -302,7 +321,7 @@ void shellTask(void * params)
   TaskHandle_t currentTask = NULL;
   ShellTaskParams * shellParams = (ShellTaskParams *) params;
   
-
+  //*shellParams->fsOutputQueue = xQueueCreate(40, sizeof(char));
   char inputBuffer[64] = {0};
   uint8_t bufferIndex = 0;
   char lastChar = 0;

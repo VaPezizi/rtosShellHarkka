@@ -1,7 +1,7 @@
 #include "filesys.h"
 #include "shell.h"
 
-SemaphoreHandle_t fsMutex = NULL;
+//SemaphoreHandle_t fsMutex = NULL;
 QueueHandle_t fsInQueue = NULL;
 
 void fileSystemTask(void * params)
@@ -13,7 +13,7 @@ void fileSystemTask(void * params)
         t_return(((FileSystemTaskParams *)params)->shellTaskHandle, -1);
     }
     //Serial.println("LittleFS Mounted Successfully");
-    fsMutex = xSemaphoreCreateMutex();
+    //fsMutex = xSemaphoreCreateMutex();
     fsInQueue = xQueueCreate(10, sizeof(FileSystemRequest));
    // fsOutQueue = xQueueCreate(40, sizeof(char));
 
@@ -51,7 +51,7 @@ void fileSystemTask(void * params)
                     break;
                 case FS_OP_RENAME:
                     //req.levels is used as the destination path pointer here
-                    renameFile(LittleFS, req.path, (const char *)req.levels, &req);
+                    renameFile(LittleFS, req.path, (const char *)req.data, &req);
                     break;
                 default:
                     break;
@@ -77,12 +77,12 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
     if(!root)
     {
         //Serial.println("- failed to open directory");
-        return -1;
+        t_return(fsReq->notifyTask, -1);
     }
     if(!root.isDirectory())
     {
         //Serial.println(" - not a directory");
-        return -1;
+        t_return(fsReq->notifyTask, -1);
     }
 
     File file = root.openNextFile();
@@ -91,12 +91,13 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
         if(file.isDirectory())
         {
             //Serial.print("  DIR : ");
+            Serial.printf("Listing directory: %s\n", file.path());
             const char * hdr = "DIR: ";
             for(size_t i=0;i<strlen(hdr);i++) 
                 xQueueSend(fsReq->outputQueue,&hdr[i],0);
             for(size_t i=0;i<strlen(file.name());i++) 
                 xQueueSend(fsReq->outputQueue,&file.name()[i],0);
-            xQueueSend(fsReq->outputQueue,"\n",0);
+            //xQueueSend(fsReq->outputQueue,"\n",0);
             //Serial.println(file.name());
             
             if(levels)
@@ -111,7 +112,7 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
                 xQueueSend(fsReq->outputQueue,&hdr[i],0);
             for(size_t i=0;i<strlen(file.name());i++) 
                 xQueueSend(fsReq->outputQueue,&file.name()[i],0);
-            const char * sep = "\tSIZE: ";
+            const char * sep = "SIZE: ";
             //xQueueSend(fsOutQueue,"\tSIZE: ",0);
             for (size_t i = 0; i < strlen(sep);i++)
                 xQueueSend(fsReq->outputQueue,&sep[i],0);
@@ -124,6 +125,7 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
         }
         file = root.openNextFile();
     }
+    //xQueueSend(fsReq->outputQueue, "\x04", 0);
     return 0;
 }
 

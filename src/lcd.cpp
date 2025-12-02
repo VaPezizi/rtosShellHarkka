@@ -7,7 +7,8 @@
 #include <LiquidCrystal_I2C.h>
 #include "lcd.h"
 
-void lcdTask(void * params){
+void lcdTask(void * params)
+{
   
   LCDTaskParams * lcdparams = (LCDTaskParams *) params;
 
@@ -34,11 +35,15 @@ void lcdTask(void * params){
     }*/
 
     //uint32_t notificationValue;
-    if(xSemaphoreTake(outputQueueMutex, pdTICKS_TO_MS(100)) == pdTRUE){
+    if(xSemaphoreTake(outputQueueMutex, pdTICKS_TO_MS(100)) == pdTRUE)
+    {
       char ch;
-      if(xQueueReceive(*lcdparams->inputQueue, &ch, (TickType_t)10) == pdTRUE){
-        if(ch == '\b'){ //Handle backspace
-          if(currentBufIndex > 0){
+      if(xQueueReceive(*lcdparams->inputQueue, &ch, (TickType_t)10) == pdTRUE)
+      {
+        if(ch == '\b')
+        { //Handle backspace
+          if(currentBufIndex > 0)
+          {
             currentBufIndex--;
             lcd.setCursor(currentBufIndex, currentRow);
             lcd.print(' '); //Overwrite with space
@@ -48,7 +53,8 @@ void lcdTask(void * params){
           vTaskDelay(50 / portTICK_PERIOD_MS);
           continue; //Skip further processing for backspace
         }
-        if(ch == '\x1b' /*|| ch== '\n' || ch == '\r'*/){ //Clear screen command
+        if(ch == '\x1b' /*|| ch== '\n' || ch == '\r'*/)
+        { //Clear screen command
           lcd.clear();
           lcd.setCursor(0,0);
           currentBufIndex = 0;
@@ -57,20 +63,36 @@ void lcdTask(void * params){
           vTaskDelay(50 / portTICK_PERIOD_MS);
           continue;
         }
-        if(ch == '\x04'){ //End of transmission
+        if(ch == '\n' || ch == '\r')
+        { //New line
+          currentBufIndex = 0;
+          
+          currentRow = (currentRow + 1) % 2;
+          lcd.setCursor(0, currentRow);
+          xSemaphoreGive(outputQueueMutex);
+          vTaskDelay(50 / portTICK_PERIOD_MS);
+          continue;
+        }
+        if(ch == '\x04')
+        { //End of transmission
           xSemaphoreGive(outputQueueMutex);
           vTaskDelay(50 / portTICK_PERIOD_MS);
           continue;
         }
         currentBufIndex++;
-        if(currentBufIndex > 16){
+        if(currentBufIndex > 16)
+        {
           currentBufIndex = 0;
+          if(currentRow == 1)
+          {
+            lcd.clear();
+          }
           currentRow = (currentRow + 1) % 2;
           lcd.setCursor(0, currentRow);
           //lcd.clear();
         }
         lcd.print(ch);
-        Serial.printf("LCD Task received char: %c\n", ch);
+        Serial.printf("LCD Task received char: %d\n", ch);
 
         //if(currentBufIndex == 16){
         //  currentBufIndex = 0;
@@ -80,7 +102,8 @@ void lcdTask(void * params){
         //}
       }
       xSemaphoreGive(outputQueueMutex);
-    }else{
+    }else
+    {
       Serial.println("LCD Task: Failed to take outputQueueMutex");
     }
     
