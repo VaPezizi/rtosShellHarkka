@@ -10,7 +10,8 @@ void fileSystemTask(void * params)
     // Littlefs defined in LittleFS.cpp
     if(!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)){
         Serial.println("LittleFS Mount Failed");
-        t_return(((FileSystemTaskParams *)params)->shellTaskHandle, -1);
+        //t_return(((FileSystemTaskParams *)params)->shellTaskHandle, -1);
+        vTaskDelete(NULL);
     }
     //Serial.println("LittleFS Mounted Successfully");
     //fsMutex = xSemaphoreCreateMutex();
@@ -76,18 +77,29 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
     File root = fs.open(dirname);
     if(!root)
     {
-        //Serial.println("- failed to open directory");
-        t_return(fsReq->notifyTask, -1);
+        Serial.println("- failed to open directory");
+        return(-1);
     }
     if(!root.isDirectory())
     {
-        //Serial.println(" - not a directory");
-        t_return(fsReq->notifyTask, -1);
+        Serial.println(" - not a directory");
+        return(-1);
     }
 
     File file = root.openNextFile();
     while(file)
     {
+        /*
+        FileReadResult result;
+        //char * str[256];
+        if(file.isDirectory())
+        {
+            
+            const char * path = file.path();
+
+
+        }*/
+        
         if(file.isDirectory())
         {
             //Serial.print("  DIR : ");
@@ -124,9 +136,11 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
             //Serial.println(file.size());
         }
         file = root.openNextFile();
+        
     }
     //xQueueSend(fsReq->outputQueue, "\x04", 0);
-    return 0;
+    //t_return(fsReq->notifyTask, 1);
+    return 1;
 }
 
 int createDir(fs::FS &fs, const char * path, FileSystemRequest * fsReq)

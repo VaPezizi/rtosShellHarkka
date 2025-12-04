@@ -84,7 +84,9 @@ void helpTask(void * params)
   ShellTaskParams * sp = (ShellTaskParams *)params;
   if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(200)) == pdTRUE){
     output_to_que("Available commands:", strlen("Available commands:"), sp);
-    char nl='\n'; output_to_que(&nl,1,sp);
+    char nl='\n'; 
+    
+    output_to_que(&nl,1,sp);
     for(size_t i=0;i<sizeof(commands)/sizeof(Command);i++){
       const Command &c = commands[i];
       output_to_que(c.command, strlen(c.command), sp);
@@ -107,8 +109,10 @@ void catTask(void * params)
     return; 
   }
 
-  char path[128]; buildPath(path, sizeof(path), sp->argBuf);
+  char path[128]; 
+  buildPath(path, sizeof(path), sp->argBuf);
   fsStream(FS_OP_READ, path, NULL, 0, sp->outputQueue,sp);
+  
   t_return(shellTaskHandle, 0);
 }
 
@@ -341,6 +345,13 @@ void shellTask(void * params)
       if (xQueueReceive(*shellParams->inputQueue, &ch, pdMS_TO_TICKS(100)) == pdTRUE)
       {
         Serial.printf("Shell Task: Received char from queue: %c\n", ch);
+        
+        Serial.printf("Current Schemaphore (inputQ) holder: %p\n", xSemaphoreGetMutexHolder(inputQueueMutex));
+        Serial.printf("Current Schemaphore (OutputQ) holder: %p\n", xSemaphoreGetMutexHolder(outputQueueMutex));
+        //Serial.printf("Current Schemaphore (OutputQ) holder: %p\n", xSemaphoreGetMutexHolder(fsMutex));
+
+
+
         xSemaphoreGive(inputQueueMutex);
         /*
         }*/

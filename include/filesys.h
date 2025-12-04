@@ -49,6 +49,12 @@ typedef struct
     TaskHandle_t notifyTask;      // task to notify when done (optional)
 } FileSystemRequest;
 
+typedef struct
+{
+    char * data;
+    size_t length;
+} FileReadResult;
+
 extern SemaphoreHandle_t fsMutex;
 extern QueueHandle_t fsInQueue;
 //rn QueueHandle_t fsOutQueue;
