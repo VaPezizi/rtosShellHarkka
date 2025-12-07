@@ -34,7 +34,7 @@ void setup(){
 
   static QueueHandle_t InputQueue = xQueueCreate(10, sizeof(char));
   static QueueHandle_t outQueue = xQueueCreate(40, sizeof(char));
-  static QueueHandle_t fsOutQueue = xQueueCreate(40, sizeof(char));
+  static QueueHandle_t fsOutQueue = xQueueCreate(50, sizeof(char));
 
   inputQueueMutex = xSemaphoreCreateMutex();
   outputQueueMutex = xSemaphoreCreateMutex();

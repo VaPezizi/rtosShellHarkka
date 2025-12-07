@@ -11,6 +11,24 @@
   - Fix bugs with task notifications and input handling
 */
 
+const Command commands[] ={
+  {"help",  helpTask,   "Show this help"},
+  {"clear", clearTask,  "Clear screen"},
+  {"ls",    lsTask,     "List directory"},
+  {"cat",   catTask,    "Show file contents"},
+  {"pwd",   pwdTask,    "Print working dir"},
+  {"cd",    cdTask,     "Change directory"},
+  {"touch", touchTask,  "Create empty file"},
+  {"mkdir", mkdirTask,  "Create directory"},
+  {"rm",    rmTask,     "Delete file"},
+  {"rmdir", rmdirTask,  "Remove directory"},
+  {"tasks", tasksTask,  "List RTOS tasks"},
+  {"kill",  killTask,   "Kill task (stub)"},
+  {"reboot",rebootTask, "Restart MCU"},
+  {"write", writeTask, "Write data to a file"},
+  {"append", appendTask, "Append data to a file"},
+};
+
 TaskHandle_t shellTaskHandle = NULL;
 static char currentPath[128] = "/";
 
@@ -21,6 +39,14 @@ void output_to_que(const char * msg, size_t len, ShellTaskParams * params)
   {
     if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
     {
+      if (uxQueueSpacesAvailable(*params->outputQueue) == 0)
+      {
+        //Serial.println("Shell Task: Output queue full, waiting...");
+        xSemaphoreGive(outputQueueMutex);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        i--; // Retry sending this character
+        continue;
+      }
       if (xQueueSend(*params->outputQueue, &msg[i], pdMS_TO_TICKS(100)) != pdTRUE)
       {
         //Serial.println("Shell Task: Failed to send char to outputQueue");
@@ -49,12 +75,16 @@ static void output_line(ShellTaskParams * sp, const char * s)
 
 static void buildPath(char * dst, size_t dstLen, const char * arg)
 {
-  if(arg[0] == '/' || currentPath[0] == '\0'){
+  if(arg[0] == '/' || currentPath[0] == '\0')
+  {
     strncpy(dst, arg, dstLen-1);
-  } else {
-    if(strcmp(currentPath, "/")==0){
+  } else 
+  {
+    if(strcmp(currentPath, "/")==0)
+    {
       snprintf(dst, dstLen, "/%s", arg);
-    } else {
+    } else 
+    {
       snprintf(dst, dstLen, "%s/%s", currentPath, arg);
     }
   }
@@ -82,20 +112,22 @@ static void fsStream(FsOp op, const char * path, const char * data, uint8_t leve
 void helpTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(200)) == pdTRUE){
-    output_to_que("Available commands:", strlen("Available commands:"), sp);
-    char nl='\n'; 
-    
+  
+  output_to_que("Available commands:", strlen("Available commands:"), sp);
+  char nl='\n'; 
+  
+  output_to_que(&nl,1,sp);
+
+  for(size_t i=0;i<sizeof(commands)/sizeof(Command);i++)
+  {
+    const Command &c = commands[i];
+    output_to_que(c.command, strlen(c.command), sp);
+    output_to_que(" - ", 3, sp);
+    output_to_que(c.description, strlen(c.description), sp);
     output_to_que(&nl,1,sp);
-    for(size_t i=0;i<sizeof(commands)/sizeof(Command);i++){
-      const Command &c = commands[i];
-      output_to_que(c.command, strlen(c.command), sp);
-      output_to_que(" - ", 3, sp);
-      output_to_que(c.description, strlen(c.description), sp);
-      output_to_que(&nl,1,sp);
-    }
-    xSemaphoreGive(outputQueueMutex);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
+  
   t_return(shellTaskHandle, 0);
 }
 
@@ -112,7 +144,7 @@ void catTask(void * params)
   char path[128]; 
   buildPath(path, sizeof(path), sp->argBuf);
   fsStream(FS_OP_READ, path, NULL, 0, sp->outputQueue,sp);
-  
+  vTaskDelay(300 / portTICK_PERIOD_MS);
   t_return(shellTaskHandle, 0);
 }
 
@@ -132,30 +164,48 @@ void cdTask(void * params)
     t_return(shellTaskHandle,-1); 
   }
   
-  uint32_t pathExists = 0;
-  fsStream(FS_OP_LIST, sp->argBuf, NULL, 0, sp->fsOutputQueue,sp);
-  if(xTaskNotifyWait(0, 0,&pathExists, pdMS_TO_TICKS(2000)) == pdTRUE)
+  int pathExists = 0;
+
+  char newPath[128];
+  buildPath(newPath, sizeof(newPath), sp->argBuf);
+
+  size_t l = strlen(newPath);
+  if(l>1 && newPath[l-1]=='/') newPath[l-1]=0;
+
+  fsStream(FS_OP_LIST, newPath, NULL, 0, sp->fsOutputQueue,sp);
+  if(xTaskNotifyWait(0, 0xFFFFFFFF,(uint32_t*)&pathExists, pdMS_TO_TICKS(2000)) == pdTRUE)
   {
     Serial.printf("cdTask: pathExists = %u\n", pathExists);
-    if(pathExists == (uint32_t)-1){
+    if(pathExists == (uint32_t)-1)
+    {
       output_line(sp, "cd: no such directory");
       t_return(shellTaskHandle, -1);
     }
-  } else {
+  } else 
+  {
     output_line(sp, "cd: timeout checking directory");
     t_return(shellTaskHandle, -1);
   }
 
+  if(strcmp(sp->argBuf, "/")==0)
+  {
+    strcpy(currentPath, "/");
+  } else 
+  {
+    strncpy(currentPath, newPath, sizeof(currentPath)-1);
+  }
   // naive: just set path (validation could be added via FS_OP_LIST)
+  /*
   if(strcmp(sp->argBuf, "/")==0){
     strcpy(currentPath, "/");
   } else {
-    char newPath[128]; buildPath(newPath, sizeof(newPath), sp->argBuf);
+    char newPath[128]; 
+    buildPath(newPath, sizeof(newPath), sp->argBuf);
     // strip trailing slash
     size_t l = strlen(newPath);
     if(l>1 && newPath[l-1]=='/') newPath[l-1]=0;
     strncpy(currentPath, newPath, sizeof(currentPath)-1);
-  }
+  }*/
   output_line(sp, currentPath);
   t_return(shellTaskHandle, 0);
 }
@@ -163,8 +213,14 @@ void cdTask(void * params)
 void touchTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(sp->argBuf[0]==0){ output_line(sp, "touch: missing file"); t_return(shellTaskHandle,-1); return; }
-  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  if(sp->argBuf[0]==0)
+  { 
+    output_line(sp, "touch: missing file"); 
+    t_return(shellTaskHandle,-1); 
+    return; 
+  }
+  char path[128]; 
+  buildPath(path,sizeof(path), sp->argBuf);
   fsStream(FS_OP_WRITE, path, "", 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
@@ -189,8 +245,14 @@ void rmTask(void * params)
 void rmdirTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(sp->argBuf[0]==0){ output_line(sp,"rmdir: missing dir"); t_return(shellTaskHandle,-1); return; }
-  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  if(sp->argBuf[0]==0)
+  { 
+    output_line(sp,"rmdir: missing dir"); 
+    t_return(shellTaskHandle,-1); return; 
+  }
+
+  char path[128]; 
+  buildPath(path,sizeof(path), sp->argBuf);
   fsStream(FS_OP_RMDIR, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
@@ -224,6 +286,52 @@ void rebootTask(void * params)
   
 }
 
+void writeTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  char * argBuf = sp->argBuf;
+  char * spacePos = strchr(argBuf, ' ');
+  if(spacePos == NULL){
+    output_line(sp, "write: missing arguments");
+    t_return(shellTaskHandle,-1);
+    return;
+  }
+  *spacePos = 0;
+  char * filename = argBuf;
+  char * data = spacePos + 1;
+  if(data[0]==0){
+    output_line(sp, "write: missing data");
+    t_return(shellTaskHandle,-1);
+    return;
+  }
+  char path[128]; buildPath(path,sizeof(path), filename);
+  fsStream(FS_OP_WRITE, path, data, 0, sp->outputQueue,sp);
+  t_return(shellTaskHandle, 0);
+}
+
+void appendTask(void * params)
+{
+  ShellTaskParams * sp = (ShellTaskParams *)params;
+  char * argBuf = sp->argBuf;
+  char * spacePos = strchr(argBuf, ' ');
+  if(spacePos == NULL){
+    output_line(sp, "append: missing arguments");
+    t_return(shellTaskHandle,-1);
+    return;
+  }
+  *spacePos = 0;
+  char * filename = argBuf;
+  char * data = spacePos + 1;
+  if(data[0]==0){
+    output_line(sp, "append: missing data");
+    t_return(shellTaskHandle,-1);
+    return;
+  }
+  char path[128]; 
+  buildPath(path,sizeof(path), filename);
+  fsStream(FS_OP_APPEND, path, data, 0, sp->outputQueue,sp);
+  t_return(shellTaskHandle, 0);
+}
 
 void handleCommand(const char * command, size_t length, TaskHandle_t * currentTask, ShellTaskParams * shellParams = NULL)
 {
@@ -295,8 +403,6 @@ void lsTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *) params;
 
-
-
   fsStream(FS_OP_LIST, currentPath, NULL, 1, sp->fsOutputQueue, sp);
   // Wait for completion marker (optional)
   vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -309,6 +415,7 @@ void lsTask(void * params)
           if(ch == '\x04') break; // EOT
           // forward to LCD or serial as your pipeline requires
           output_to_que(&ch, 1, sp);
+          vTaskDelay(10 / portTICK_PERIOD_MS);
       }
   }
       

@@ -31,37 +31,43 @@ void fileSystemTask(void * params)
         FileSystemRequest req;
         if(xQueueReceive(fsInQueue, &req, portMAX_DELAY) == pdTRUE){
             //Got a request
-            switch(req.operation){
-                case FS_OP_LIST:
-                    listDir(LittleFS, req.path, req.levels, &req);
-                    break;
-                case FS_OP_READ:
-                    readFile(LittleFS, req.path, &req);
-                    break;
-                case FS_OP_WRITE:
-                    writeFile(LittleFS, req.path, req.data, &req);
-                    break;
-                case FS_OP_DELETE:
-                    deleteFile(LittleFS, req.path, &req);
-                    break;
-                case FS_OP_MKDIR:
-                    createDir(LittleFS, req.path, &req);
-                    break;
-                case FS_OP_RMDIR:
-                    removeDir(LittleFS, req.path, &req);
-                    break;
-                case FS_OP_RENAME:
-                    //req.levels is used as the destination path pointer here
-                    renameFile(LittleFS, req.path, (const char *)req.data, &req);
-                    break;
-                default:
-                    break;
+            int val;
+            switch (req.operation)
+            {
+            case FS_OP_LIST:
+                val = listDir(LittleFS, req.path, req.levels, &req);
+                break;
+            case FS_OP_READ:
+                val = readFile(LittleFS, req.path, &req);
+                break;
+            case FS_OP_WRITE:
+                val = writeFile(LittleFS, req.path, req.data, &req);
+                break;
+            case FS_OP_DELETE:
+                val = deleteFile(LittleFS, req.path, &req);
+                break;
+            case FS_OP_MKDIR:
+                val = createDir(LittleFS, req.path, &req);
+                break;
+            case FS_OP_RMDIR:
+                val = removeDir(LittleFS, req.path, &req);
+                break;
+            case FS_OP_RENAME:
+                // req.levels is used as the destination path pointer here
+                val = renameFile(LittleFS, req.path, (const char *)req.data, &req);
+                break;
+            case FS_OP_APPEND:
+                val = appendFile(LittleFS, req.path, req.data, &req);
+                break;
+            default:
+                break;
             }
             //Notify the requesting task if needed
             char done = '\x04';
             xQueueSend(req.outputQueue, &done, 0);
             if(req.notifyTask != NULL){
-                xTaskNotifyGive(req.notifyTask);
+                Serial.printf("FileSystemTask: Notifying task %p of completion with value %d\n", req.notifyTask, val);
+                xTaskNotify(req.notifyTask, val, eSetValueWithOverwrite);
             }
 
         }
@@ -72,12 +78,17 @@ void fileSystemTask(void * params)
 
 /* TEST */
 
+void safe_output(QueueHandle_t * outputQueue, const char * str)
+{
+    
+}
+
 int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest * fsReq)
 {
     File root = fs.open(dirname);
     if(!root)
     {
-        Serial.println("- failed to open directory");
+        Serial.println("- failed to open directory (!root)");
         return(-1);
     }
     if(!root.isDirectory())
@@ -120,20 +131,24 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
         {
             //Serial.print("  FILE: ");
             const char * hdr = "FILE: ";
+            const char * fileName = file.name();
+            const uint fileSize = file.size();
             for(size_t i=0;i<strlen(hdr);i++) 
                 xQueueSend(fsReq->outputQueue,&hdr[i],0);
-            for(size_t i=0;i<strlen(file.name());i++) 
-                xQueueSend(fsReq->outputQueue,&file.name()[i],0);
+            for(size_t i=0;i<strlen(fileName);i++) 
+                xQueueSend(fsReq->outputQueue,&fileName[i],0);
+                //xQueueSend(fsReq->outputQueue,&file.name()[i],0);
             const char * sep = "SIZE: ";
             //xQueueSend(fsOutQueue,"\tSIZE: ",0);
             for (size_t i = 0; i < strlen(sep);i++)
                 xQueueSend(fsReq->outputQueue,&sep[i],0);
             char sizeStr[16];
-            snprintf(sizeStr, sizeof(sizeStr), "%u\n", file.size());
+            snprintf(sizeStr, sizeof(sizeStr), "%u\n", fileSize);
             for(size_t i=0;i<strlen(sizeStr);i++) 
                 xQueueSend(fsReq->outputQueue,&sizeStr[i],0);
             //Serial.print("\tSIZE: ");
             //Serial.println(file.size());
+            Serial.printf("FILE: %s\tSIZE: %u\n", fileName, fileSize);
         }
         file = root.openNextFile();
         
@@ -160,12 +175,37 @@ int createDir(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 int removeDir(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 {
     Serial.printf("Removing Dir: %s\n", path);
+    
+    // Check if directory is empty first
+    File dir = fs.open(path);
+    if(!dir || !dir.isDirectory()){
+        const char *err = "ERR: not a directory\n";
+        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        return -1;
+    }
+    
+    File file = dir.openNextFile();
+    if(file){
+        const char *err = "ERR: directory not empty\n";
+        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        file.close();
+        dir.close();
+        return -1;
+    }
+    dir.close();
+    
     if(fs.rmdir(path))
     {
+        const char *msg = "Directory removed\n";
+        for(size_t i=0;i<strlen(msg);i++) 
+            xQueueSend(fsReq->outputQueue, &msg[i], 0);
         return 1;
     }
     else
     {
+        const char *err = "ERR: rmdir failed\n";
+        for(size_t i=0;i<strlen(err);i++) 
+            xQueueSend(fsReq->outputQueue, &err[i], 0);
         return -1;
     }
 }
@@ -175,7 +215,8 @@ int readFile(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
     File file = fs.open(path);
     if(!file || file.isDirectory()){
         const char *err = "ERR: open for read\n";
-        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        for(size_t i=0;i<strlen(err);i++) 
+            xQueueSend(fsReq->outputQueue, &err[i], 0);
         return -1;
     }
     while(file.available()){
@@ -183,7 +224,8 @@ int readFile(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
         xQueueSend(fsReq->outputQueue, &c, 0);
     }
     file.close();
-    char nl='\n'; xQueueSend(fsReq->outputQueue,&nl,0);
+    char nl='\n'; 
+    xQueueSend(fsReq->outputQueue,&nl,0);
     return 1;
 }
 
@@ -192,13 +234,19 @@ int writeFile(fs::FS &fs, const char * path, const char * message, FileSystemReq
     File file = fs.open(path, FILE_WRITE);
     if(!file){
         const char *err = "ERR: open for write\n";
-        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        for(size_t i=0;i<strlen(err);i++) 
+            xQueueSend(fsReq->outputQueue, &err[i], 0);
         return -1;
     }
     bool ok = file.print(message ? message : "");
     file.close();
+
+    if(message && message[0] == '\0')
+        ok = true; // touching a file is always successful
+
     const char *msg = ok ? "OK: write\n" : "ERR: write\n";
-    for(size_t i=0;i<strlen(msg);i++) xQueueSend(fsReq->outputQueue, &msg[i], 0);
+    for(size_t i=0;i<strlen(msg);i++) 
+        xQueueSend(fsReq->outputQueue, &msg[i], 0);
     return ok ? 1 : -1;
 }
 
@@ -207,13 +255,15 @@ int appendFile(fs::FS &fs, const char * path, const char * message, FileSystemRe
     File file = fs.open(path, FILE_APPEND);
     if(!file){
         const char *err = "ERR: open for append\n";
-        for(size_t i=0;i<strlen(err);i++) xQueueSend(fsReq->outputQueue, &err[i], 0);
+        for(size_t i=0;i<strlen(err);i++) 
+            xQueueSend(fsReq->outputQueue, &err[i], 0);
         return -1;
     }
     bool ok = file.print(message ? message : "");
     file.close();
     const char *msg = ok ? "OK: append\n" : "ERR: append\n";
-    for(size_t i=0;i<strlen(msg);i++) xQueueSend(fsReq->outputQueue, &msg[i], 0);
+    for(size_t i=0;i<strlen(msg);i++) 
+        xQueueSend(fsReq->outputQueue, &msg[i], 0);
     return ok ? 1 : -1;
 }
 
@@ -221,12 +271,17 @@ int renameFile(fs::FS &fs, const char * path1, const char * path2, FileSystemReq
 {
     bool ok = fs.rename(path1, path2);
     const char *hdr = ok ? "OK: rename " : "ERR: rename ";
-    for(size_t i=0;i<strlen(hdr);i++) xQueueSend(fsReq->outputQueue, &hdr[i], 0);
-    for(size_t i=0;i<strlen(path1);i++) xQueueSend(fsReq->outputQueue, &path1[i], 0);
+    for(size_t i=0;i<strlen(hdr);i++) 
+        xQueueSend(fsReq->outputQueue, &hdr[i], 0);
+    for(size_t i=0;i<strlen(path1);i++) 
+        xQueueSend(fsReq->outputQueue, &path1[i], 0);
     const char *sep = " -> ";
-    for(size_t i=0;i<strlen(sep);i++) xQueueSend(fsReq->outputQueue, &sep[i], 0);
-    for(size_t i=0;i<strlen(path2);i++) xQueueSend(fsReq->outputQueue, &path2[i], 0);
-    char nl='\n'; xQueueSend(fsReq->outputQueue,&nl,0);
+    for(size_t i=0;i<strlen(sep);i++) 
+        xQueueSend(fsReq->outputQueue, &sep[i], 0);
+    for(size_t i=0;i<strlen(path2);i++) 
+        xQueueSend(fsReq->outputQueue, &path2[i], 0);
+    char nl='\n'; 
+        xQueueSend(fsReq->outputQueue,&nl,0);
     return ok ? 1 : -1;
 }
 
@@ -234,9 +289,12 @@ int deleteFile(fs::FS &fs, const char * path, FileSystemRequest * fsReq)
 {
     bool ok = fs.remove(path);
     const char *hdr = ok ? "OK: delete " : "ERR: delete ";
-    for(size_t i=0;i<strlen(hdr);i++) xQueueSend(fsReq->outputQueue, &hdr[i], 0);
-    for(size_t i=0;i<strlen(path);i++) xQueueSend(fsReq->outputQueue, &path[i], 0);
-    char nl='\n'; xQueueSend(fsReq->outputQueue,&nl,0);
+    for(size_t i=0;i<strlen(hdr);i++) 
+        xQueueSend(fsReq->outputQueue, &hdr[i], 0);
+    for(size_t i=0;i<strlen(path);i++) 
+        xQueueSend(fsReq->outputQueue, &path[i], 0);
+    char nl='\n'; 
+    xQueueSend(fsReq->outputQueue,&nl,0);
     return ok ? 1 : -1;
 }
 

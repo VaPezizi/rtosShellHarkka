@@ -22,12 +22,6 @@ typedef struct
     //QueueHandle_t requestQueue;
 }FileSystemTaskParams;
 
-typedef struct 
-{
-    const char *currentPath;
-    
-} FileSystemState;
-
 typedef enum
 {
     FS_OP_LIST,
@@ -36,7 +30,8 @@ typedef enum
     FS_OP_DELETE,
     FS_OP_MKDIR,
     FS_OP_RMDIR,
-    FS_OP_RENAME
+    FS_OP_RENAME,
+    FS_OP_APPEND
 } FsOp;
 
 typedef struct 
