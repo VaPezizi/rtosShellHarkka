@@ -37,7 +37,7 @@ void output_to_que(const char * msg, size_t len, ShellTaskParams * params)
 
   for (size_t i = 0; i < len; i++)
   {
-    if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(100)))
+    if(xSemaphoreTake(outputQueueMutex, pdMS_TO_TICKS(500)))
     {
       if (uxQueueSpacesAvailable(*params->outputQueue) == 0)
       {
@@ -415,7 +415,11 @@ void lsTask(void * params)
           if(ch == '\x04') break; // EOT
           // forward to LCD or serial as your pipeline requires
           output_to_que(&ch, 1, sp);
-          vTaskDelay(10 / portTICK_PERIOD_MS);
+          /*while(xQueueSend(*sp->outputQueue, &ch, pdMS_TO_TICKS(100)) != pdTRUE)
+          {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+          }*/
+          //vTaskDelay(10 / portTICK_PERIOD_MS);
       }
   }
       
@@ -453,8 +457,8 @@ void shellTask(void * params)
       {
         Serial.printf("Shell Task: Received char from queue: %c\n", ch);
         
-        Serial.printf("Current Schemaphore (inputQ) holder: %p\n", xSemaphoreGetMutexHolder(inputQueueMutex));
-        Serial.printf("Current Schemaphore (OutputQ) holder: %p\n", xSemaphoreGetMutexHolder(outputQueueMutex));
+        //Serial.printf("Current Schemaphore (inputQ) holder: %p\n", xSemaphoreGetMutexHolder(inputQueueMutex));
+        //Serial.printf("Current Schemaphore (OutputQ) holder: %p\n", xSemaphoreGetMutexHolder(outputQueueMutex));
         //Serial.printf("Current Schemaphore (OutputQ) holder: %p\n", xSemaphoreGetMutexHolder(fsMutex));
 
 

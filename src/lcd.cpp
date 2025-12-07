@@ -69,6 +69,9 @@ void lcdTask(void * params)
           
           currentRow = (currentRow + 1) % 2;
           lcd.setCursor(0, currentRow);
+          lcd.print("                ");
+          lcd.setCursor(0, currentRow);
+
           xSemaphoreGive(outputQueueMutex);
           vTaskDelay(50 / portTICK_PERIOD_MS);
           continue;
@@ -88,6 +91,8 @@ void lcdTask(void * params)
             lcd.clear();
           }
           currentRow = (currentRow + 1) % 2;
+          lcd.setCursor(0, currentRow);
+          lcd.print("                ");
           lcd.setCursor(0, currentRow);
           //lcd.clear();
         }

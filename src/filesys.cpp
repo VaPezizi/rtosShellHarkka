@@ -80,12 +80,25 @@ void fileSystemTask(void * params)
 
 void safe_output(QueueHandle_t * outputQueue, const char * str)
 {
-    
+    if(!str) return;
+
+    for(size_t i=0;i<strlen(str);i++) 
+    {
+        if(uxQueueSpacesAvailable(*outputQueue) == 0)
+        {
+            // wait for space
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+            i--; // retry
+        }else
+        {
+            xQueueSend(*outputQueue,&str[i],50);
+        }
+    }
 }
 
 int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest * fsReq)
 {
-    File root = fs.open(dirname);
+   File root = fs.open(dirname);
     if(!root)
     {
         Serial.println("- failed to open directory (!root)");
@@ -100,61 +113,46 @@ int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest 
     File file = root.openNextFile();
     while(file)
     {
-        /*
-        FileReadResult result;
-        //char * str[256];
         if(file.isDirectory())
         {
+            // Copy the name to a local buffer before file object changes
+            char dirName[64];
+            strncpy(dirName, file.name(), sizeof(dirName) - 1);
+            dirName[sizeof(dirName) - 1] = '\0';
             
-            const char * path = file.path();
-
-
-        }*/
-        
-        if(file.isDirectory())
-        {
-            //Serial.print("  DIR : ");
             Serial.printf("Listing directory: %s\n", file.path());
-            const char * hdr = "DIR: ";
-            for(size_t i=0;i<strlen(hdr);i++) 
-                xQueueSend(fsReq->outputQueue,&hdr[i],0);
-            for(size_t i=0;i<strlen(file.name());i++) 
-                xQueueSend(fsReq->outputQueue,&file.name()[i],0);
-            //xQueueSend(fsReq->outputQueue,"\n",0);
-            //Serial.println(file.name());
+            safe_output(&fsReq->outputQueue, "DIR: ");
+            safe_output(&fsReq->outputQueue, dirName);
+            safe_output(&fsReq->outputQueue, "\n");
             
             if(levels)
             {
-                listDir(fs, file.path(), levels -1, fsReq);
+                listDir(fs, file.path(), levels - 1, fsReq);
             }
         } else 
         {
-            //Serial.print("  FILE: ");
-            const char * hdr = "FILE: ";
-            const char * fileName = file.name();
-            const uint fileSize = file.size();
-            for(size_t i=0;i<strlen(hdr);i++) 
-                xQueueSend(fsReq->outputQueue,&hdr[i],0);
-            for(size_t i=0;i<strlen(fileName);i++) 
-                xQueueSend(fsReq->outputQueue,&fileName[i],0);
-                //xQueueSend(fsReq->outputQueue,&file.name()[i],0);
-            const char * sep = "SIZE: ";
-            //xQueueSend(fsOutQueue,"\tSIZE: ",0);
-            for (size_t i = 0; i < strlen(sep);i++)
-                xQueueSend(fsReq->outputQueue,&sep[i],0);
-            char sizeStr[16];
+            // Copy filename to local buffer
+            char fileName[64];
+            strncpy(fileName, file.name(), sizeof(fileName) - 1);
+            fileName[sizeof(fileName) - 1] = '\0';
+            
+            uint32_t fileSize = file.size();
+            
+            safe_output(&fsReq->outputQueue, "FILE: ");
+            safe_output(&fsReq->outputQueue, fileName);
+            safe_output(&fsReq->outputQueue, "  SIZE: ");
+            
+            char sizeStr[32];
             snprintf(sizeStr, sizeof(sizeStr), "%u\n", fileSize);
-            for(size_t i=0;i<strlen(sizeStr);i++) 
-                xQueueSend(fsReq->outputQueue,&sizeStr[i],0);
-            //Serial.print("\tSIZE: ");
-            //Serial.println(file.size());
+            safe_output(&fsReq->outputQueue, sizeStr);
+            
             Serial.printf("FILE: %s\tSIZE: %u\n", fileName, fileSize);
         }
+        file.close(); // Close current file before opening next
         file = root.openNextFile();
-        
     }
-    //xQueueSend(fsReq->outputQueue, "\x04", 0);
-    //t_return(fsReq->notifyTask, 1);
+    root.close(); // Close the directory
+    safe_output(&fsReq->outputQueue, "\x04");
     return 1;
 }
 
