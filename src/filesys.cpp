@@ -1,7 +1,7 @@
 #include "filesys.h"
 #include "shell.h"
 
-//SemaphoreHandle_t fsMutex = NULL;
+SemaphoreHandle_t fsMutex = NULL;
 QueueHandle_t fsInQueue = NULL;
 
 void fileSystemTask(void * params)
@@ -14,7 +14,7 @@ void fileSystemTask(void * params)
         vTaskDelete(NULL);
     }
     //Serial.println("LittleFS Mounted Successfully");
-    //fsMutex = xSemaphoreCreateMutex();
+    fsMutex = xSemaphoreCreateMutex();
     fsInQueue = xQueueCreate(10, sizeof(FileSystemRequest));
    // fsOutQueue = xQueueCreate(40, sizeof(char));
 
@@ -32,6 +32,11 @@ void fileSystemTask(void * params)
         if(xQueueReceive(fsInQueue, &req, portMAX_DELAY) == pdTRUE){
             //Got a request
             int val;
+            if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500)) != pdTRUE){
+                Serial.println("FileSystemTask: Failed to take fsMutex semaphore!");
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+                continue;
+            }
             switch (req.operation)
             {
             case FS_OP_LIST:
@@ -69,7 +74,7 @@ void fileSystemTask(void * params)
                 Serial.printf("FileSystemTask: Notifying task %p of completion with value %d\n", req.notifyTask, val);
                 xTaskNotify(req.notifyTask, val, eSetValueWithOverwrite);
             }
-
+            xSemaphoreGive(fsMutex);
         }
     }
 
@@ -98,61 +103,67 @@ void safe_output(QueueHandle_t * outputQueue, const char * str)
 
 int listDir(fs::FS &fs, const char * dirname, uint8_t levels, FileSystemRequest * fsReq)
 {
-   File root = fs.open(dirname);
+    File root = fs.open(dirname);
     if(!root)
     {
-        Serial.println("- failed to open directory (!root)");
-        return(-1);
+        Serial.printf("ERR: failed to open directory %s\n", dirname);
+        safe_output(&fsReq->outputQueue, "ERR: open dir\n");
+        return -1;
     }
     if(!root.isDirectory())
     {
-        Serial.println(" - not a directory");
-        return(-1);
+        Serial.printf("ERR: %s is not a directory\n", dirname);
+        safe_output(&fsReq->outputQueue, "ERR: not a dir\n");
+        root.close();
+        return -1;
     }
 
     File file = root.openNextFile();
     while(file)
     {
-        if(file.isDirectory())
+        char pathBuf[128];
+        char nameBuf[64];
+        bool isDir = file.isDirectory();
+        uint32_t size = file.size();
+        
+        // Copy before file object changes
+        strncpy(pathBuf, file.path(), sizeof(pathBuf) - 1);
+        pathBuf[sizeof(pathBuf) - 1] = '\0';
+        
+        strncpy(nameBuf, file.name(), sizeof(nameBuf) - 1);
+        nameBuf[sizeof(nameBuf) - 1] = '\0';
+        
+        file.close(); // Close BEFORE recursing
+        
+        if(isDir)
         {
-            // Copy the name to a local buffer before file object changes
-            char dirName[64];
-            strncpy(dirName, file.name(), sizeof(dirName) - 1);
-            dirName[sizeof(dirName) - 1] = '\0';
-            
-            Serial.printf("Listing directory: %s\n", file.path());
             safe_output(&fsReq->outputQueue, "DIR: ");
-            safe_output(&fsReq->outputQueue, dirName);
+            safe_output(&fsReq->outputQueue, nameBuf);
             safe_output(&fsReq->outputQueue, "\n");
+            Serial.printf("DIR: %s\n", nameBuf);
             
-            if(levels)
+            if(levels > 0)
             {
-                listDir(fs, file.path(), levels - 1, fsReq);
+                listDir(fs, pathBuf, levels - 1, fsReq);
             }
-        } else 
+        }
+        else
         {
-            // Copy filename to local buffer
-            char fileName[64];
-            strncpy(fileName, file.name(), sizeof(fileName) - 1);
-            fileName[sizeof(fileName) - 1] = '\0';
-            
-            uint32_t fileSize = file.size();
-            
             safe_output(&fsReq->outputQueue, "FILE: ");
-            safe_output(&fsReq->outputQueue, fileName);
+            safe_output(&fsReq->outputQueue, nameBuf);
             safe_output(&fsReq->outputQueue, "  SIZE: ");
             
             char sizeStr[32];
-            snprintf(sizeStr, sizeof(sizeStr), "%u\n", fileSize);
+            snprintf(sizeStr, sizeof(sizeStr), "%u\n", size);
             safe_output(&fsReq->outputQueue, sizeStr);
             
-            Serial.printf("FILE: %s\tSIZE: %u\n", fileName, fileSize);
+            Serial.printf("FILE: %s SIZE: %u\n", nameBuf, size);
         }
-        file.close(); // Close current file before opening next
+        
         file = root.openNextFile();
     }
-    root.close(); // Close the directory
-    safe_output(&fsReq->outputQueue, "\x04");
+    
+    root.close();
     return 1;
 }
 
