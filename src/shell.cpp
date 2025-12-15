@@ -227,7 +227,12 @@ void touchTask(void * params)
 
 void mkdirTask(void * params){
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(sp->argBuf[0]==0){ output_line(sp,"mkdir: missing dir"); t_return(shellTaskHandle,-1); return; }
+  if(sp->argBuf[0]==0)
+  { 
+    output_line(sp,"mkdir: missing dir"); 
+    t_return(shellTaskHandle,-1); 
+    return; 
+  }
   char path[128]; buildPath(path,sizeof(path), sp->argBuf);
   fsStream(FS_OP_MKDIR, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
@@ -236,8 +241,14 @@ void mkdirTask(void * params){
 void rmTask(void * params)
 {
   ShellTaskParams * sp = (ShellTaskParams *)params;
-  if(sp->argBuf[0]==0){ output_line(sp,"rm: missing file"); t_return(shellTaskHandle,-1); return; }
-  char path[128]; buildPath(path,sizeof(path), sp->argBuf);
+  if(sp->argBuf[0]==0)
+  { 
+    output_line(sp,"rm: missing file"); 
+    t_return(shellTaskHandle,-1); 
+    return; 
+  }
+  char path[128]; 
+  buildPath(path,sizeof(path), sp->argBuf);
   fsStream(FS_OP_DELETE, path, NULL, 0, sp->outputQueue,sp);
   t_return(shellTaskHandle, 0);
 }
@@ -291,7 +302,8 @@ void writeTask(void * params)
   ShellTaskParams * sp = (ShellTaskParams *)params;
   char * argBuf = sp->argBuf;
   char * spacePos = strchr(argBuf, ' ');
-  if(spacePos == NULL){
+  if(spacePos == NULL)
+  {
     output_line(sp, "write: missing arguments");
     t_return(shellTaskHandle,-1);
     return;
@@ -299,7 +311,8 @@ void writeTask(void * params)
   *spacePos = 0;
   char * filename = argBuf;
   char * data = spacePos + 1;
-  if(data[0]==0){
+  if(data[0]==0)
+  {
     output_line(sp, "write: missing data");
     t_return(shellTaskHandle,-1);
     return;
@@ -314,7 +327,8 @@ void appendTask(void * params)
   ShellTaskParams * sp = (ShellTaskParams *)params;
   char * argBuf = sp->argBuf;
   char * spacePos = strchr(argBuf, ' ');
-  if(spacePos == NULL){
+  if(spacePos == NULL)
+  {
     output_line(sp, "append: missing arguments");
     t_return(shellTaskHandle,-1);
     return;
@@ -322,7 +336,8 @@ void appendTask(void * params)
   *spacePos = 0;
   char * filename = argBuf;
   char * data = spacePos + 1;
-  if(data[0]==0){
+  if(data[0]==0)
+  {
     output_line(sp, "append: missing data");
     t_return(shellTaskHandle,-1);
     return;
@@ -352,10 +367,12 @@ void handleCommand(const char * command, size_t length, TaskHandle_t * currentTa
     }
   }
   // ...existing code (parsing)...
-  if(args == NULL || strlen(args) == 0){
+  if(args == NULL || strlen(args) == 0)
+  {
     strncpy(cmd, command, length);
   }
-  if(shellParams){
+  if(shellParams)
+  {
     memset(shellParams->argBuf, 0, sizeof(shellParams->argBuf));
     strncpy(shellParams->argBuf, args, sizeof(shellParams->argBuf)-1);
   }
@@ -407,7 +424,8 @@ void lsTask(void * params)
   // Wait for completion marker (optional)
   vTaskDelay(100 / portTICK_PERIOD_MS);
   
-  for(;;){
+  for(;;)
+  {
       char ch;
       if(xQueueReceive(*sp->fsOutputQueue, &ch, pdMS_TO_TICKS(1000)) == pdTRUE)
       {
